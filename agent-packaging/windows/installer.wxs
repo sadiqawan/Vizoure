@@ -1,105 +1,61 @@
-
 <?xml version="1.0" encoding="UTF-8"?>
-
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
 
   <Product Id="*"
-
            Name="Vizoure NMS Agent"
-
            Language="1033"
-
            Version="7.4.9"
-
            Manufacturer="Vizoure"
-
-           UpgradeCode="00b277a2-85fb-4b6d-9185-94622e7a0fd6">
+           UpgradeCode="PUT-YOUR-UNIQUE-GUID-HERE">
 
     <Package InstallerVersion="200"
-
              Compressed="yes"
-
              InstallScope="perMachine"
-
              Description="Vizoure NMS Monitoring Agent" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of Vizoure Agent is already installed." />
-
     <MediaTemplate EmbedCab="yes" />
 
     <Feature Id="ProductFeature" Title="Vizoure Agent" Level="1">
-
       <ComponentGroupRef Id="ProductComponents" />
-
     </Feature>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
-
       <Directory Id="ProgramFilesFolder">
-
         <Directory Id="INSTALLFOLDER" Name="Vizoure NMS Agent" />
-
       </Directory>
-
     </Directory>
 
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-
       <Component Id="AgentBinary" Guid="*">
-
         <File Id="AgentExe"
-
               Source="vizoure_agentd.exe"
-
               Name="vizoure_agentd.exe"
-
               KeyPath="yes" />
-
       </Component>
-
       <Component Id="AgentConfig" Guid="*">
-
         <File Id="AgentConf"
-
               Source="vizoure_agentd.conf"
-
               Name="vizoure_agentd.conf" />
-
       </Component>
-
     </ComponentGroup>
 
     <!-- Install as Windows Service -->
-
     <ServiceInstall Id="InstallVizoureAgent"
-
                     Type="ownProcess"
-
                     Name="VizoureAgent"
-
                     DisplayName="Vizoure NMS Agent"
-
                     Description="Vizoure NMS monitoring agent"
-
                     Start="auto"
-
                     ErrorControl="normal"
-
                     Arguments="-c &quot;[INSTALLFOLDER]vizoure_agentd.conf&quot;" />
 
     <ServiceControl Id="StartVizoureAgent"
-
                     Start="install"
-
                     Stop="both"
-
                     Remove="uninstall"
-
                     Name="VizoureAgent"
-
                     Wait="yes" />
 
   </Product>
-
 </Wix>
-
