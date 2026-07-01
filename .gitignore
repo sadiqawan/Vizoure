@@ -1,0 +1,10 @@
+dist/
+zabbix-source/
+build/
+*.deb
+*.msi
+*.pkg
+*.iso
+*.vmx
+*.ovf
+*.ova

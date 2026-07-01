@@ -1,0 +1,23 @@
+#cloud-config
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  identity:
+    hostname: vizoure-nms
+    username: admin
+    password: "$6$rounds=4096$vizoure$hash"  # will be overridden by install-nms.sh
+  ssh:
+    install-server: true
+    allow-pw: true
+  storage:
+    layout:
+      name: lvm
+  packages:
+    - openssh-server
+    - curl
+    - wget
+    - git
+  late-commands:
+    - curtin in-target --target=/target -- bash -c "curl -sSL https://raw.githubusercontent.com/sadiqawan/Vizoure/main/scripts/install-nms.sh | bash"
