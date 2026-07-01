@@ -8,3 +8,4 @@ build/
 *.vmx
 *.ovf
 *.ova
+packer/secrets.pkr.hcl
