@@ -1,19 +1,29 @@
 #!/bin/bash
 set -e
 
+# ─────────────────────────────────────────────
+# Vizoure NMS - Automated Install Script
+# Base: Zabbix 7.4.9 on Ubuntu 24.04
+# Usage: curl -sSL https://raw.githubusercontent.com/sadiqawan/Vizoure/main/scripts/install-nms.sh | sudo bash
+# ─────────────────────────────────────────────
+
+REPO_RAW="https://raw.githubusercontent.com/sadiqawan/Vizoure/main"
 DB_NAME="vizoure"
 DB_USER="vizoure"
 DB_PASSWORD="AES@admin"
 OS_USERNAME="admin"
 OS_PASSWORD="AES@admin"
 ZABBIX_VERSION="7.4"
+UI="/usr/share/zabbix/ui"
 
-echo "=== Vizoure NMS Installation Starting ==="
+echo "========================================="
+echo "  Vizoure NMS Installation Starting..."
+echo "========================================="
 
 # ─────────────────────────────────────────────
 # 1. OS USER
 # ─────────────────────────────────────────────
-echo "[1/7] Setting up OS user..."
+echo "[1/9] Setting up OS user..."
 if id "$OS_USERNAME" &>/dev/null; then
     echo "${OS_USERNAME}:${OS_PASSWORD}" | chpasswd
 else
@@ -22,17 +32,19 @@ else
     usermod -aG sudo "$OS_USERNAME"
 fi
 chage -d 0 "$OS_USERNAME"
+echo "  OS user ready"
 
 # ─────────────────────────────────────────────
 # 2. SYSTEM UPDATE
 # ─────────────────────────────────────────────
-echo "[2/7] Updating system..."
+echo "[2/9] Updating system..."
 apt update -y && apt upgrade -y
+apt install -y curl wget git python3
 
 # ─────────────────────────────────────────────
 # 3. MYSQL
 # ─────────────────────────────────────────────
-echo "[3/7] Installing MySQL..."
+echo "[3/9] Installing MySQL..."
 apt install -y mysql-server
 systemctl start mysql
 systemctl enable mysql
@@ -40,7 +52,7 @@ systemctl enable mysql
 # ─────────────────────────────────────────────
 # 4. ZABBIX REPO + PACKAGES
 # ─────────────────────────────────────────────
-echo "[4/7] Installing Zabbix packages..."
+echo "[4/9] Installing Zabbix packages..."
 wget -q https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_${ZABBIX_VERSION}+ubuntu24.04_all.deb
 dpkg -i zabbix-release_latest_${ZABBIX_VERSION}+ubuntu24.04_all.deb
 apt update -y
@@ -54,11 +66,11 @@ apt install -y \
 # ─────────────────────────────────────────────
 # 5. DATABASE
 # ─────────────────────────────────────────────
-echo "[5/7] Setting up database..."
+echo "[5/9] Setting up database..."
 mysql -uroot <<SQLEOF
 CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
-CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
-GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';
+CREATE USER IF NOT EXISTS '"'"'${DB_USER}'"'"'@'"'"'localhost'"'"' IDENTIFIED BY '"'"'${DB_PASSWORD}'"'"';
+GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '"'"'${DB_USER}'"'"'@'"'"'localhost'"'"';
 SET GLOBAL log_bin_trust_function_creators = 1;
 FLUSH PRIVILEGES;
 SQLEOF
@@ -72,31 +84,24 @@ SET GLOBAL log_bin_trust_function_creators = 0;
 SQLEOF
 
 # ─────────────────────────────────────────────
-# 6. CONFIGURE
+# 6. CONFIGURE ZABBIX SERVER
 # ─────────────────────────────────────────────
-echo "[6/7] Configuring Vizoure NMS..."
-
-# Zabbix server config
+echo "[6/9] Configuring server..."
 sed -i "s/^# DBPassword=.*/DBPassword=${DB_PASSWORD}/" /etc/zabbix/zabbix_server.conf
 sed -i "s/^DBName=.*/DBName=${DB_NAME}/"               /etc/zabbix/zabbix_server.conf
 sed -i "s/^DBUser=.*/DBUser=${DB_USER}/"               /etc/zabbix/zabbix_server.conf
 
-# Apache: detect from conf-available (more robust than conf-enabled)
-echo "  Detecting Zabbix Apache config..."
+# Apache config — /vizoure pointing to correct /ui path
 ZABBIX_CONF=$(find /etc/apache2/conf-available -name "*zabbix*.conf" | head -1)
 if [ -n "$ZABBIX_CONF" ]; then
     CONF_NAME=$(basename "$ZABBIX_CONF" .conf)
     a2disconf "$CONF_NAME" 2>/dev/null || true
-    echo "  Disabled existing config: $CONF_NAME"
-else
-    echo "  No existing Zabbix Apache config found — skipping disable step"
 fi
 
-# Create dedicated Vizoure Apache config
-cat > /etc/apache2/conf-available/vizoure.conf << 'APACHEEOF'
-Alias /vizoure /usr/share/zabbix
+cat > /etc/apache2/conf-available/vizoure.conf << APACHEEOF
+Alias /vizoure /usr/share/zabbix/ui
 
-<Directory "/usr/share/zabbix">
+<Directory "/usr/share/zabbix/ui">
     Options FollowSymLinks
     AllowOverride None
     Require all granted
@@ -111,82 +116,133 @@ Alias /vizoure /usr/share/zabbix
     </IfModule>
 </Directory>
 APACHEEOF
-
 a2enconf vizoure
 
-# Frontend config — skip setup wizard
+# Frontend DB config — skip setup wizard
 mkdir -p /etc/zabbix/web
 cat > /etc/zabbix/web/zabbix.conf.php << PHPEOF
 <?php
-\$DB['TYPE']           = 'MYSQL';
-\$DB['SERVER']         = 'localhost';
-\$DB['PORT']           = '0';
-\$DB['DATABASE']       = '${DB_NAME}';
-\$DB['USER']           = '${DB_USER}';
-\$DB['PASSWORD']       = '${DB_PASSWORD}';
-\$DB['SCHEMA']         = '';
-\$DB['ENCRYPTION']     = false;
-\$DB['DOUBLE_IEEE754'] = true;
-\$ZBX_SERVER           = 'localhost';
-\$ZBX_SERVER_PORT      = '10051';
-\$ZBX_SERVER_NAME      = 'Vizoure NMS';
+\$DB["TYPE"]           = "MYSQL";
+\$DB["SERVER"]         = "localhost";
+\$DB["PORT"]           = "0";
+\$DB["DATABASE"]       = "${DB_NAME}";
+\$DB["USER"]           = "${DB_USER}";
+\$DB["PASSWORD"]       = "${DB_PASSWORD}";
+\$DB["SCHEMA"]         = "";
+\$DB["ENCRYPTION"]     = false;
+\$DB["DOUBLE_IEEE754"] = true;
+\$ZBX_SERVER           = "localhost";
+\$ZBX_SERVER_PORT      = "10051";
+\$ZBX_SERVER_NAME      = "Vizoure NMS";
 \$IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;
 PHPEOF
 
-# Safe branding — only known safe file
-DEFINES=$(find /usr/share/zabbix -name "defines.inc.php" | head -1)
+# ─────────────────────────────────────────────
+# 7. BRANDING
+# ─────────────────────────────────────────────
+echo "[7/9] Applying Vizoure branding..."
+
+# Wait for UI files to be available
+sleep 2
+
+# Browser title
+DEFINES=$(find /usr/share/zabbix/ui -name "defines.inc.php" | head -1)
 if [ -n "$DEFINES" ]; then
     sed -i "s/define('ZBX_TITLE'.*/define('ZBX_TITLE', 'Vizoure NMS');/" "$DEFINES"
-    echo "  Browser title set to Vizoure NMS"
 fi
 
+# Download and install logo files from repo
+mkdir -p /usr/share/zabbix/ui/assets/img
+
+curl -sSL "${REPO_RAW}/branding/logos/logo.png" \
+    -o /usr/share/zabbix/ui/assets/img/logo.png
+
+curl -sSL "${REPO_RAW}/branding/logos/favicon.png" \
+    -o /usr/share/zabbix/ui/assets/img/favicon.ico
+
+curl -sSL "${REPO_RAW}/branding/logos/favicon.png" \
+    -o /usr/share/zabbix/ui/assets/img/favicon.png
+
+curl -sSL "${REPO_RAW}/branding/logos/login-bg.png" \
+    -o /usr/share/zabbix/ui/assets/img/login_background.png
+
+# Remove Zabbix SIA copyright + Help/Support from login page
+LOGIN_FILE=$(find /usr/share/zabbix/ui/app/views -name "*login*" 2>/dev/null | head -1)
+if [ -n "$LOGIN_FILE" ]; then
+    sed -i "/Zabbix SIA/d" "$LOGIN_FILE"
+    sed -i "/2001.*$(date +%Y)/d" "$LOGIN_FILE"
+    sed -i "/Help.*Support/d" "$LOGIN_FILE"
+    sed -i "s/Zabbix/Vizoure/g" "$LOGIN_FILE"
+fi
+
+# Remove Help/Support/Integrations from sidebar
+for f in $(find /usr/share/zabbix/ui/app/views -name "*.php" 2>/dev/null); do
+    sed -i "/\'Support\'/d" "$f"
+    sed -i "/\'Integrations\'/d" "$f"
+    sed -i "/\'Help\'/d" "$f"
+done
+
+# Replace Zabbix in include/locale files only (safe)
+find /usr/share/zabbix/ui/include -name "*.php" | while read f; do
+    sed -i "s/Zabbix SIA/Vizoure/g" "$f"
+done
+
+echo "  Branding applied"
+
 # ─────────────────────────────────────────────
-# 7. START SERVICES
+# 8. START SERVICES
 # ─────────────────────────────────────────────
-echo "[7/7] Starting services..."
+echo "[8/9] Starting services..."
 systemctl restart zabbix-server zabbix-agent apache2
 systemctl enable zabbix-server zabbix-agent apache2
 
-# Wait for API to be actually ready — timeout after 2 minutes
-echo "  Waiting for Vizoure API to become ready..."
+# ─────────────────────────────────────────────
+# 9. POST-INSTALL API CONFIGURATION
+# ─────────────────────────────────────────────
+echo "[9/9] Configuring via API..."
+
+ZBX_URL="http://localhost/vizoure/api_jsonrpc.php"
+
+echo "  Waiting for API..."
 if timeout 120 bash -c \
-    'until curl -s http://localhost/vizoure/api_jsonrpc.php >/dev/null 2>&1; do sleep 2; done'; then
-    echo "  API is ready."
+    "until curl -s $ZBX_URL >/dev/null 2>&1; do sleep 2; done"; then
+    echo "  API ready"
 else
-    echo ""
-    echo "  ERROR: API did not respond within 120 seconds."
-    echo "  Check service status:"
-    echo "    systemctl status zabbix-server"
-    echo "    systemctl status apache2"
+    echo "  ERROR: API not responding after 120s"
+    echo "  Check: systemctl status zabbix-server apache2"
     exit 1
 fi
 
-# Change Admin password via API (correct method for Zabbix 7.4)
-ZBX_URL="http://localhost/vizoure/api_jsonrpc.php"
-
+# Login with default password
 TOKEN=$(curl -s -X POST "$ZBX_URL" \
     -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
-    | php -r "
-        \$r = json_decode(file_get_contents('php://stdin'));
-        echo isset(\$r->result) ? \$r->result : '';
-    ")
+    | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('result',''))" 2>/dev/null)
 
 if [ -n "$TOKEN" ]; then
+    # Change Admin password
     curl -s -X POST "$ZBX_URL" \
         -H "Content-Type: application/json" \
-        -d "{
-            \"jsonrpc\":\"2.0\",
-            \"method\":\"user.update\",
-            \"params\":{\"userid\":\"1\",\"passwd\":\"AES@admin\"},
-            \"auth\":\"${TOKEN}\",
-            \"id\":2
-        }" > /dev/null
-    echo "  Admin password changed to AES@admin"
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.update\",\"params\":{\"userid\":\"1\",\"passwd\":\"AES@admin\"},\"auth\":\"${TOKEN}\",\"id\":2}" \
+        > /dev/null
+    echo "  Admin password → AES@admin"
+
+    # Set server name
+    curl -s -X POST "$ZBX_URL" \
+        -H "Content-Type: application/json" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"settings.update\",\"params\":{\"server_name\":\"Vizoure NMS\"},\"auth\":\"${TOKEN}\",\"id\":3}" \
+        > /dev/null
+    echo "  Server name → Vizoure NMS"
+
+    # Rename default host group
+    curl -s -X POST "$ZBX_URL" \
+        -H "Content-Type: application/json" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"hostgroup.update\",\"params\":{\"groupid\":\"1\",\"name\":\"Vizoure Servers\"},\"auth\":\"${TOKEN}\",\"id\":4}" \
+        > /dev/null
+    echo "  Default group → Vizoure Servers"
 else
-    echo ""
-    echo "  WARNING: Could not authenticate with default Zabbix credentials."
-    echo "  Change Admin password manually via the web UI after install."
+    echo "  WARNING: Could not login with default password"
+    echo "  Change Admin password manually after install"
 fi
 
 echo ""
