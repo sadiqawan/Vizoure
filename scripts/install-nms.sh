@@ -108,39 +108,11 @@ PHPEOF
 
 echo "[7/9] Applying Vizoure branding..."
 
-DEFINES=$(find /usr/share/zabbix/ui -name "defines.inc.php" | head -1)
-if [ -n "$DEFINES" ]; then
-    sed -i "s/define('ZBX_TITLE'.*/define('ZBX_TITLE', 'Vizoure NMS');/" "$DEFINES"
-fi
+apt install -y imagemagick python3 curl
 
-mkdir -p /usr/share/zabbix/ui/assets/img
-
-curl -sSL "${REPO_RAW}/branding/logos/logo.png" \
-    -o /usr/share/zabbix/ui/assets/img/logo.png
-curl -sSL "${REPO_RAW}/branding/logos/favicon.png" \
-    -o /usr/share/zabbix/ui/assets/img/favicon.ico
-curl -sSL "${REPO_RAW}/branding/logos/favicon.png" \
-    -o /usr/share/zabbix/ui/assets/img/favicon.png
-curl -sSL "${REPO_RAW}/branding/logos/login-bg.png" \
-    -o /usr/share/zabbix/ui/assets/img/login_background.png
-
-LOGIN_FILE=$(find /usr/share/zabbix/ui/app/views -name "*login*" 2>/dev/null | head -1)
-if [ -n "$LOGIN_FILE" ]; then
-    sed -i '/Zabbix SIA/d' "$LOGIN_FILE"
-    sed -i '/2001.*20/d' "$LOGIN_FILE"
-    sed -i '/Help.*Support/d' "$LOGIN_FILE"
-    sed -i 's/Zabbix/Vizoure/g' "$LOGIN_FILE"
-fi
-
-find /usr/share/zabbix/ui/app/views -name "*.php" 2>/dev/null | while read f; do
-    sed -i "/'Support'/d" "$f"
-    sed -i "/'Integrations'/d" "$f"
-    sed -i "/'Help'/d" "$f"
-done
-
-find /usr/share/zabbix/ui/include -name "*.php" 2>/dev/null | while read f; do
-    sed -i 's/Zabbix SIA/Vizoure/g' "$f"
-done
+curl -sSL "${REPO_RAW}/branding/apply-branding.sh" -o /tmp/apply-branding.sh
+chmod +x /tmp/apply-branding.sh
+bash /tmp/apply-branding.sh
 
 echo "[8/9] Starting services..."
 systemctl restart zabbix-server zabbix-agent apache2
@@ -163,25 +135,37 @@ TOKEN=$(curl -s -X POST "$ZBX_URL" \
     -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
     | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('result',''))" 2>/dev/null)
-
 if [ -n "$TOKEN" ]; then
     curl -s -X POST "$ZBX_URL" \
         -H "Content-Type: application/json" \
-        -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.update\",\"params\":{\"userid\":\"1\",\"passwd\":\"AES@admin\"},\"auth\":\"${TOKEN}\",\"id\":2}" \
-        > /dev/null
-    echo "  Admin password set to AES@admin"
-
-    curl -s -X POST "$ZBX_URL" \
-        -H "Content-Type: application/json" \
-        -d "{\"jsonrpc\":\"2.0\",\"method\":\"settings.update\",\"params\":{\"server_name\":\"Vizoure NMS\"},\"auth\":\"${TOKEN}\",\"id\":3}" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"jsonrpc":"2.0","method":"settings.update","params":{"server_name":"Vizoure NMS"},"id":3}' \
         > /dev/null
     echo "  Server name set to Vizoure NMS"
-
     curl -s -X POST "$ZBX_URL" \
         -H "Content-Type: application/json" \
-        -d "{\"jsonrpc\":\"2.0\",\"method\":\"hostgroup.update\",\"params\":{\"groupid\":\"1\",\"name\":\"Vizoure Servers\"},\"auth\":\"${TOKEN}\",\"id\":4}" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"jsonrpc":"2.0","method":"hostgroup.update","params":{"groupid":"1","name":"Vizoure Servers"},"id":4}' \
         > /dev/null
     echo "  Default group renamed to Vizoure Servers"
+    curl -s -X POST "$ZBX_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"jsonrpc":"2.0","method":"user.create","params":{"username":"admin","passwd":"Vizoure@123","roleid":"3","usrgrps":[{"usrgrpid":"7"}]},"id":10}' \
+        > /dev/null
+    echo "  Created admin/Vizoure@123 account"
+    NEWTOKEN=$(curl -s -X POST "$ZBX_URL" \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"admin","password":"Vizoure@123"},"id":11}' \
+        | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('result',''))" 2>/dev/null)
+    if [ -n "$NEWTOKEN" ]; then
+        curl -s -X POST "$ZBX_URL" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $NEWTOKEN" \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.update\",\"params\":{\"userid\":\"1\",\"passwd\":\"$(openssl rand -base64 24)\"},\"id\":12}" \
+            > /dev/null
+        echo "  Old Admin/zabbix account disabled"
+    fi
 else
     echo "  WARNING: Could not login — change Admin password manually"
 fi
