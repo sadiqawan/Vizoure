@@ -32,7 +32,7 @@ apt install -y mysql-server
 systemctl start mysql
 systemctl enable mysql
 
-echo "[4/9] Installing Zabbix packages..."
+echo "[4/9] Installing Vizoure NMS packages..."
 wget -q https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_${ZABBIX_VERSION}+ubuntu24.04_all.deb
 dpkg -i zabbix-release_latest_${ZABBIX_VERSION}+ubuntu24.04_all.deb
 apt update -y
@@ -164,7 +164,7 @@ if [ -n "$TOKEN" ]; then
             -H "Authorization: Bearer $NEWTOKEN" \
             -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.update\",\"params\":{\"userid\":\"1\",\"passwd\":\"$(openssl rand -base64 24)\"},\"id\":12}" \
             > /dev/null
-        echo "  Old Admin/zabbix account disabled"
+        echo "  Old default account disabled"
     fi
 else
     echo "  WARNING: Could not login — change Admin password manually"
@@ -175,7 +175,7 @@ echo "========================================="
 echo "  Vizoure NMS Installation Complete!"
 echo "========================================="
 echo "  Web UI:   http://$(hostname -I | awk '{print $1}')/vizoure"
-echo "  Username: Admin"
-echo "  Password: AES@admin"
-echo "  OS Login: admin / AES@admin"
+echo "  Username: admin"
+echo "  Password: Vizoure@123"
+echo "  OS Login: admin / AES@admin  (Linux login only)"
 echo "========================================="
