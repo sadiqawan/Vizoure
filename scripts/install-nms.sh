@@ -154,6 +154,45 @@ if [ -n "$TOKEN" ]; then
         -d '{"jsonrpc":"2.0","method":"user.create","params":{"username":"admin","passwd":"Vizoure@123","roleid":"3","usrgrps":[{"usrgrpid":"7"}]},"id":10}' \
         > /dev/null
     echo "  Created admin/Vizoure@123 account"
+
+    curl -s -X POST "$ZBX_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"jsonrpc":"2.0","method":"host.update","params":{"hostid":"10084","host":"Vizoure NMS Server","name":"Vizoure NMS Server"},"id":40}' \
+        > /dev/null
+    echo "  Renamed default host to Vizoure NMS Server"
+
+    curl -s -X POST "$ZBX_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"jsonrpc":"2.0","method":"hostgroup.update","params":{"groupid":"4","name":"Vizoure NMS Servers"},"id":41}' \
+        > /dev/null
+
+    curl -s -X POST "$ZBX_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"jsonrpc":"2.0","method":"hostgroup.update","params":{"groupid":"5","name":"Discovered Devices"},"id":42}' \
+        > /dev/null
+
+    curl -s -X POST "$ZBX_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"jsonrpc":"2.0","method":"hostgroup.update","params":{"groupid":"2","name":"Linux Servers"},"id":43}' \
+        > /dev/null
+
+    curl -s -X POST "$ZBX_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"jsonrpc":"2.0","method":"hostgroup.update","params":{"groupid":"6","name":"Virtual Machines"},"id":44}' \
+        > /dev/null
+    echo "  Renamed default host groups"
+
+    curl -s -X POST "$ZBX_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"jsonrpc":"2.0","method":"dashboard.delete","params":["2","57"],"id":45}' \
+        > /dev/null
+    echo "  Removed default Zabbix dashboards"
     NEWTOKEN=$(curl -s -X POST "$ZBX_URL" \
         -H "Content-Type: application/json" \
         -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"admin","password":"Vizoure@123"},"id":11}' \
