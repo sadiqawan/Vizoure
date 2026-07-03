@@ -193,6 +193,48 @@ if [ -n "$TOKEN" ]; then
         -d '{"jsonrpc":"2.0","method":"dashboard.delete","params":["2","57"],"id":45}' \
         > /dev/null
     echo "  Removed default Zabbix dashboards"
+
+    ZBX_TOKEN="$TOKEN" python3 << 'PYEOF'
+import urllib.request, json, os
+
+TOKEN = os.environ.get("ZBX_TOKEN")
+URL = "http://localhost/vizoure/api_jsonrpc.php"
+
+def call(method, params, req_id=1):
+    payload = json.dumps({"jsonrpc":"2.0","method":method,"params":params,"id":req_id}).encode()
+    req = urllib.request.Request(URL, data=payload, headers={
+        "Content-Type":"application/json",
+        "Authorization":f"Bearer {TOKEN}"
+    })
+    with urllib.request.urlopen(req) as resp:
+        return json.load(resp)
+
+result = call("dashboard.get", {
+    "output": ["dashboardid","name"],
+    "selectPages": ["dashboard_pageid","name","display_period","widgets"],
+    "dashboardids": ["1"]
+}, 1)
+
+dashboard = result["result"][0]
+changed = False
+
+for page in dashboard["pages"]:
+    for widget in page["widgets"]:
+        if widget.get("type") == "gauge" and widget.get("name") == "Zabbix server":
+            widget["name"] = "Memory Utilization"
+            changed = True
+        if widget.get("type") == "svggraph":
+            for field in widget.get("fields", []):
+                if field.get("name") in ("ds.0.hosts.0","ds.1.hosts.0") and field.get("value") == "Zabbix server":
+                    field["value"] = "Vizoure NMS Server"
+                    changed = True
+
+if changed:
+    call("dashboard.update", {"dashboardid": dashboard["dashboardid"], "pages": dashboard["pages"]}, 2)
+    print("  Dashboard widget names/references updated")
+else:
+    print("  No widget changes needed")
+PYEOF
     NEWTOKEN=$(curl -s -X POST "$ZBX_URL" \
         -H "Content-Type: application/json" \
         -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"admin","password":"Vizoure@123"},"id":11}' \
