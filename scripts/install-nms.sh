@@ -54,6 +54,11 @@ echo "  Importing schema..."
 zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | \
     mysql --default-character-set=utf8mb4 -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME}
 
+echo "  Applying default branding renames..."
+mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%' AND status=3;"
+mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET vendor_name = 'Vizoure' WHERE vendor_name = 'Zabbix' AND status=3;"
+mysql -uroot -e "UPDATE ${DB_NAME}.actions SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
+
 mysql -uroot -e "SET GLOBAL log_bin_trust_function_creators = 0;"
 
 echo "[6/9] Configuring server..."
