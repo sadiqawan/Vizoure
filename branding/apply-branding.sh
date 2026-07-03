@@ -173,3 +173,16 @@ systemctl restart apache2
 
 echo ""
 echo "=== Vizoure NMS Branding Applied Successfully ==="
+
+# ─────────────────────────────────────────────
+# 9. SYSTEM INFO WIDGET LABELS
+# ─────────────────────────────────────────────
+echo "[9/9] Fixing System Information widget labels..."
+
+SYSINFO="$UI/app/partials/administration.system.info.php"
+if [ -f "$SYSINFO" ]; then
+    sed -i "s/_('Zabbix server is running')/_('Vizoure NMS Server Status')/" "$SYSINFO"
+    sed -i "s/_('Zabbix server version')/_('Vizoure NMS Version')/" "$SYSINFO"
+    sed -i "s/_('Zabbix frontend version')/_('Vizoure Web Console Version')/" "$SYSINFO"
+    echo "  System Info widget labels updated"
+fi
