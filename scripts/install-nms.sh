@@ -54,7 +54,7 @@ echo "  Importing schema..."
 zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | \
     mysql --default-character-set=utf8mb4 -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME}
 
-echo "  Applying default branding renames..."
+echo "  Applying default branding renames to database..."
 mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%' AND status=3;"
 mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET vendor_name = 'Vizoure' WHERE vendor_name = 'Zabbix' AND status=3;"
 mysql -uroot -e "UPDATE ${DB_NAME}.actions SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
@@ -62,6 +62,7 @@ mysql -uroot -e "UPDATE ${DB_NAME}.triggers SET description = REPLACE(descriptio
 mysql -uroot -e "UPDATE ${DB_NAME}.items SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
 mysql -uroot -e "UPDATE ${DB_NAME}.usrgrp SET name = 'Vizoure Administrators' WHERE name = 'Zabbix administrators';"
 mysql -uroot -e "UPDATE ${DB_NAME}.media_type SET smtp_email = 'noreply@vizoure.local' WHERE smtp_email = 'zabbix@example.com';"
+echo "  Database branding complete"
 
 mysql -uroot -e "SET GLOBAL log_bin_trust_function_creators = 0;"
 
@@ -116,9 +117,7 @@ cat > /etc/zabbix/web/zabbix.conf.php << PHPEOF
 PHPEOF
 
 echo "[7/9] Applying Vizoure branding..."
-
 apt install -y imagemagick python3 curl
-
 curl -sSL "${REPO_RAW}/branding/apply-branding.sh" -o /tmp/apply-branding.sh
 chmod +x /tmp/apply-branding.sh
 bash /tmp/apply-branding.sh
@@ -144,6 +143,7 @@ TOKEN=$(curl -s -X POST "$ZBX_URL" \
     -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
     | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('result',''))" 2>/dev/null)
+
 if [ -n "$TOKEN" ]; then
     curl -s -X POST "$ZBX_URL" \
         -H "Content-Type: application/json" \
@@ -151,12 +151,14 @@ if [ -n "$TOKEN" ]; then
         -d '{"jsonrpc":"2.0","method":"settings.update","params":{"server_name":"Vizoure NMS"},"id":3}' \
         > /dev/null
     echo "  Server name set to Vizoure NMS"
+
     curl -s -X POST "$ZBX_URL" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $TOKEN" \
         -d '{"jsonrpc":"2.0","method":"hostgroup.update","params":{"groupid":"1","name":"Vizoure Servers"},"id":4}' \
         > /dev/null
     echo "  Default group renamed to Vizoure Servers"
+
     curl -s -X POST "$ZBX_URL" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $TOKEN" \
@@ -244,6 +246,7 @@ if changed:
 else:
     print("  No widget changes needed")
 PYEOF
+
     NEWTOKEN=$(curl -s -X POST "$ZBX_URL" \
         -H "Content-Type: application/json" \
         -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"admin","password":"Vizoure@123"},"id":11}' \

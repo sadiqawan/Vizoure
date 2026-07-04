@@ -12,9 +12,9 @@ UI="/usr/share/zabbix/ui"
 echo "=== Applying Vizoure NMS Branding ==="
 
 # ─────────────────────────────────────────────
-# 1. LOGO + FAVICON — download from repo
+# 1. LOGO + FAVICON
 # ─────────────────────────────────────────────
-echo "[1/8] Installing logo and favicon assets..."
+echo "[1/11] Installing logo and favicon assets..."
 
 mkdir -p "$UI/assets/img"
 
@@ -23,22 +23,18 @@ curl -sSL "${REPO_RAW}/branding/logos/favicon.png" -o /tmp/vizoure-favicon-raw.p
 curl -sSL "${REPO_RAW}/branding/logos/favicon.ico" -o /tmp/vizoure-favicon.ico
 curl -sSL "${REPO_RAW}/branding/logos/login-bg.png" -o "$UI/assets/img/login_background.png"
 
-# Resize header/sidebar logo to proper height (avoids oversized banner bug)
 convert /tmp/vizoure-logo-raw.png -resize x40 "$UI/assets/img/logo.png"
 
-# Build a proper square compact icon for collapsed sidebar
 convert /tmp/vizoure-favicon-raw.png -resize 32x32 -gravity center \
     -background none -extent 32x32 "$UI/assets/img/logo-compact.png"
 
 cp /tmp/vizoure-favicon-raw.png "$UI/assets/img/favicon.png"
 
-# CRITICAL: favicon.ico must exist at BOTH locations —
-# UI root (actual served path: href="favicon.ico" resolves relative to /vizoure/)
-# AND assets/img (used by some internal references)
+# favicon.ico must exist at BOTH locations
 cp /tmp/vizoure-favicon.ico "$UI/assets/img/favicon.ico"
 cp /tmp/vizoure-favicon.ico "$UI/favicon.ico"
 
-# Touch icons (mobile/bookmark)
+# Touch icons
 convert /tmp/vizoure-favicon-raw.png -resize 76x76   "$UI/assets/img/apple-touch-icon-76x76-precomposed.png"
 convert /tmp/vizoure-favicon-raw.png -resize 120x120 "$UI/assets/img/apple-touch-icon-120x120-precomposed.png"
 convert /tmp/vizoure-favicon-raw.png -resize 152x152 "$UI/assets/img/apple-touch-icon-152x152-precomposed.png"
@@ -50,7 +46,7 @@ echo "  Logo, favicon, touch-icons installed"
 # ─────────────────────────────────────────────
 # 2. LOGO SIZE CSS FIX
 # ─────────────────────────────────────────────
-echo "[2/8] Applying logo sizing CSS..."
+echo "[2/11] Applying logo sizing CSS..."
 
 cat >> "$UI/assets/styles/blue-theme.css" << 'CSSEOF'
 
@@ -61,11 +57,9 @@ cat >> "$UI/assets/styles/blue-theme.css" << 'CSSEOF'
 CSSEOF
 
 # ─────────────────────────────────────────────
-# 3. BRAND CONFIG — activates Zabbix's built-in
-#    rebranding system (removes Support/Integrations
-#    from sidebar + login page automatically)
+# 3. BRAND CONFIG
 # ─────────────────────────────────────────────
-echo "[3/8] Creating brand.conf.php..."
+echo "[3/11] Creating brand.conf.php..."
 
 mkdir -p "$UI/local/conf"
 
@@ -89,15 +83,15 @@ chown www-data:www-data "$UI/local/conf/brand.conf.php"
 echo "  Brand config active — Support/Integrations auto-removed"
 
 # ─────────────────────────────────────────────
-# 4. FOOTER COPYRIGHT (comment block, cosmetic)
+# 4. FOOTER COPYRIGHT
 # ─────────────────────────────────────────────
-echo "[4/8] Fixing footer copyright comment..."
+echo "[4/11] Fixing footer copyright comment..."
 sed -i 's/Zabbix SIA/Vizoure/' "$UI/app/partials/layout.htmlpage.footer.php" 2>/dev/null || true
 
 # ─────────────────────────────────────────────
 # 5. REMOVE HELP LINK FROM LOGIN PAGE
 # ─────────────────────────────────────────────
-echo "[5/8] Removing Help link from login page..."
+echo "[5/11] Removing Help link from login page..."
 
 python3 << 'PYEOF'
 path = "/usr/share/zabbix/ui/include/views/general.login.php"
@@ -126,13 +120,13 @@ if old_block in content:
         f.write(content)
     print("  Login Help/Support block removed")
 else:
-    print("  WARNING: login.php block pattern not found (Zabbix version may differ) — skipped")
+    print("  WARNING: login.php block pattern not found — skipped")
 PYEOF
 
 # ─────────────────────────────────────────────
 # 6. REMOVE HELP FROM SIDEBAR MENU
 # ─────────────────────────────────────────────
-echo "[6/8] Removing Help from sidebar menu..."
+echo "[6/11] Removing Help from sidebar menu..."
 
 python3 << 'PYEOF'
 path = "/usr/share/zabbix/ui/include/classes/helpers/CMenuHelper.php"
@@ -159,18 +153,74 @@ PYEOF
 # ─────────────────────────────────────────────
 # 7. BROWSER TITLE
 # ─────────────────────────────────────────────
-echo "[7/8] Setting browser title..."
+echo "[7/11] Setting browser title..."
 DEFINES=$(find "$UI" -name "defines.inc.php" | head -1)
 if [ -n "$DEFINES" ]; then
     sed -i "s/define('ZBX_TITLE'.*/define('ZBX_TITLE', 'Vizoure NMS');/" "$DEFINES"
 fi
 
 # ─────────────────────────────────────────────
-# 8. RESTART SERVICES
+# 8. SYSTEM INFO WIDGET LABELS
 # ─────────────────────────────────────────────
-echo "[8/8] Restarting Apache..."
+echo "[8/11] Fixing System Information widget labels..."
+SYSINFO="$UI/app/partials/administration.system.info.php"
+if [ -f "$SYSINFO" ]; then
+    sed -i "s/_('Zabbix server is running')/_('Vizoure NMS Server Status')/" "$SYSINFO"
+    sed -i "s/_('Zabbix server version')/_('Vizoure NMS Version')/" "$SYSINFO"
+    sed -i "s/_('Zabbix frontend version')/_('Vizoure Web Console Version')/" "$SYSINFO"
+    echo "  System Info widget labels updated"
+fi
+
+# ─────────────────────────────────────────────
+# 9. AVAILABILITY LABEL: ZBX → VIZ
+# ─────────────────────────────────────────────
+echo "[9/11] Fixing availability label ZBX -> VIZ..."
+AVAILFILE="$UI/include/classes/html/CHostAvailability.php"
+if [ -f "$AVAILFILE" ]; then
+    sed -i "s/INTERFACE_TYPE_AGENT => 'ZBX'/INTERFACE_TYPE_AGENT => 'VIZ'/" "$AVAILFILE"
+    echo "  Availability label updated to VIZ"
+fi
+
+# ─────────────────────────────────────────────
+# 10. SCATTERED UI STRINGS
+# ─────────────────────────────────────────────
+echo "[10/11] Fixing scattered UI strings..."
+
+SCRIPTEDIT="$UI/app/views/administration.script.edit.php"
+if [ -f "$SCRIPTEDIT" ]; then
+    sed -i "s/_('Zabbix agent')/_('Vizoure Agent')/" "$SCRIPTEDIT"
+    sed -i "s/_('Zabbix proxy or server')/_('Vizoure Proxy or Server')/" "$SCRIPTEDIT"
+    sed -i "s/_('Zabbix server')/_('Vizoure Server')/" "$SCRIPTEDIT"
+    sed -i "s/Global script execution on Zabbix server is disabled/Global script execution on Vizoure Server is disabled/" "$SCRIPTEDIT"
+fi
+
+ACTIONLOG="$UI/app/controllers/CControllerActionLogList.php"
+if [ -f "$ACTIONLOG" ]; then
+    sed -i "s/zbx_actionlog_export.csv/vizoure_actionlog_export.csv/" "$ACTIONLOG"
+fi
+
+PROBLEMVIEW="$UI/app/controllers/CControllerProblemView.php"
+if [ -f "$PROBLEMVIEW" ]; then
+    sed -i "s/zbx_problems_export.csv/vizoure_problems_export.csv/" "$PROBLEMVIEW"
+fi
+
+HOSTWIZARD="$UI/app/views/host.wizard.edit.php"
+if [ -f "$HOSTWIZARD" ]; then
+    sed -i "s/in Zabbix\\.'/in Vizoure NMS.'/" "$HOSTWIZARD"
+fi
+
+AUTHEDIT="$UI/app/views/administration.authentication.edit.php"
+if [ -f "$AUTHEDIT" ]; then
+    sed -i "s/_('Zabbix login form')/_('Vizoure login form')/" "$AUTHEDIT"
+fi
+
+echo "  Scattered UI strings updated"
+
+# ─────────────────────────────────────────────
+# 11. RESTART SERVICES
+# ─────────────────────────────────────────────
+echo "[11/11] Restarting Apache..."
 systemctl restart apache2
 
 echo ""
 echo "=== Vizoure NMS Branding Applied Successfully ==="
-
