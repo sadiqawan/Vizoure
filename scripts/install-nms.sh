@@ -86,18 +86,23 @@ Alias /vizoure /usr/share/zabbix/ui
     AllowOverride None
     Require all granted
 
+    RewriteEngine On
+    RewriteBase /vizoure/
+
+    RewriteCond %{THE_REQUEST} \s/vizoure/zabbix\.php [NC]
+    RewriteRule ^zabbix\.php$ vizoure.php [R=301,QSA,L]
+
     <IfModule mod_php.c>
         php_value max_execution_time 300
         php_value memory_limit 128M
         php_value post_max_size 16M
         php_value upload_max_filesize 2M
-        php_value max_input_time 300
-        php_value always_populate_raw_post_data -1
     </IfModule>
 </Directory>
 APACHEEOF
 
 a2enconf vizoure
+a2enmod rewrite 2>/dev/null || true
 
 mkdir -p /etc/zabbix/web
 cat > /etc/zabbix/web/zabbix.conf.php << PHPEOF

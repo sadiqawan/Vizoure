@@ -243,6 +243,39 @@ if [ -f "$ITEMS" ]; then
     sed -i "s/ITEM_TYPE_ZABBIX => _('Zabbix agent')/ITEM_TYPE_ZABBIX => _('Vizoure Agent')/" "$ITEMS"
 fi
 
+# ─────────────────────────────────────────────
+# 12. URL REBRANDING: zabbix.php → vizoure.php
+# ─────────────────────────────────────────────
+echo "[12/12] Rebranding URLs: zabbix.php -> vizoure.php..."
+
+# Create vizoure.php as the real entry point
+cp "$UI/zabbix.php" "$UI/vizoure.php"
+
+# Fix ZBase.php routing to accept vizoure.php as valid entry point
+ZBASE="$UI/include/classes/core/ZBase.php"
+if [ -f "$ZBASE" ]; then
+    sed -i "s/(\$file === 'zabbix.php')/(\$file === 'zabbix.php' || \$file === 'vizoure.php')/" "$ZBASE"
+    sed -i "s/redirect('zabbix.php?action=system.warning')/redirect('vizoure.php?action=system.warning')/" "$ZBASE"
+fi
+
+# Replace hardcoded zabbix.php in all JS files
+grep -rln "'zabbix\.php'\|\"zabbix\.php\"" "$UI/js/" 2>/dev/null | \
+    xargs sed -i "s/'zabbix\.php'/'vizoure.php'/g; s/\"zabbix\.php\"/\"vizoure.php\"/g" 2>/dev/null || true
+
+grep -rln "'zabbix\.php'\|\"zabbix\.php\"" "$UI/widgets/" 2>/dev/null | \
+    xargs sed -i "s/'zabbix\.php'/'vizoure.php'/g; s/\"zabbix\.php\"/\"vizoure.php\"/g" 2>/dev/null || true
+
+# Replace hardcoded zabbix.php in all PHP files
+grep -rln "zabbix\.php" "$UI/include/" 2>/dev/null | \
+    grep "\.php$" | grep -v ".bak\|.po\|.mo" | \
+    xargs sed -i "s/'zabbix\.php'/'vizoure.php'/g; s/\"zabbix\.php\"/\"vizoure.php\"/g; s/zabbix\.php?/vizoure.php?/g" 2>/dev/null || true
+
+grep -rln "zabbix\.php" "$UI/app/" 2>/dev/null | \
+    grep "\.php$" | grep -v ".bak" | \
+    xargs sed -i "s/'zabbix\.php'/'vizoure.php'/g; s/\"zabbix\.php\"/\"vizoure.php\"/g; s/zabbix\.php?/vizoure.php?/g" 2>/dev/null || true
+
+echo "  URL rebranding complete"
+
 echo "[11/11] Restarting Apache..."
 systemctl restart apache2
 
