@@ -63,6 +63,7 @@ mysql -uroot -e "UPDATE ${DB_NAME}.items SET name = REPLACE(name, 'Zabbix', 'Viz
 mysql -uroot -e "UPDATE ${DB_NAME}.usrgrp SET name = 'Vizoure Administrators' WHERE name = 'Zabbix administrators';"
 mysql -uroot -e "UPDATE ${DB_NAME}.users SET name='Vizoure', surname='Administrator' WHERE username='Admin';"
 mysql -uroot -e "UPDATE ${DB_NAME}.media_type SET smtp_email = 'noreply@vizoure.local' WHERE smtp_email = 'zabbix@example.com';"
+mysql -uroot -e "UPDATE ${DB_NAME}.images SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
 echo "  Database branding complete"
 
 mysql -uroot -e "SET GLOBAL log_bin_trust_function_creators = 0;"

@@ -276,6 +276,43 @@ grep -rln "zabbix\.php" "$UI/app/" 2>/dev/null | \
 
 echo "  URL rebranding complete"
 
+
+# ─────────────────────────────────────────────
+# 13. ADDITIONAL SCATTERED LABELS
+# ─────────────────────────────────────────────
+echo "  Fixing additional scattered labels..."
+
+# Zabbix agent (active) label
+sed -i "s/ITEM_TYPE_ZABBIX_ACTIVE => _('Zabbix agent (active)')/ITEM_TYPE_ZABBIX_ACTIVE => _('Vizoure Agent (active)')/" \
+    "$UI/include/items.inc.php" 2>/dev/null || true
+
+# Connector protocol
+sed -i "s/_('Zabbix Streaming Protocol v1.0')/_('Vizoure Streaming Protocol v1.0')/" \
+    "$UI/app/views/connector.edit.php" 2>/dev/null || true
+
+# Misc config + proxy vault labels
+for FILE in "$UI/app/views/administration.miscconfig.edit.php" "$UI/app/views/proxy.edit.php"; do
+    [ -f "$FILE" ] || continue
+    sed -i "s/Zabbix server: secrets are retrieved/Vizoure Server: secrets are retrieved/g" "$FILE"
+    sed -i "s/Zabbix server and proxy: secrets are retrieved/Vizoure Server and proxy: secrets are retrieved/g" "$FILE"
+    sed -i "s/by Zabbix server and forwarded/by Vizoure Server and forwarded/g" "$FILE"
+    sed -i "s/by both Zabbix server and proxies/by both Vizoure Server and proxies/g" "$FILE"
+    sed -i "s/_('Zabbix server')/_('Vizoure Server')/g" "$FILE"
+    sed -i "s/_('Zabbix server and proxy')/_('Vizoure Server and proxy')/g" "$FILE"
+done
+
+# CItemData descriptions
+sed -i "s/Returns 1 - for Zabbix agent; 2 - for Zabbix agent 2/Returns 1 - for Vizoure Agent; 2 - for Vizoure Agent 2/" \
+    "$UI/include/classes/data/CItemData.php" 2>/dev/null || true
+sed -i "s/Version of Zabbix agent\. Returns string/Version of Vizoure Agent. Returns string/" \
+    "$UI/include/classes/data/CItemData.php" 2>/dev/null || true
+
+# Widget manifest.json author
+find "$UI/widgets" -name "manifest.json" \
+    -exec sed -i 's/"author": "Zabbix"/"author": "Vizoure"/' {} \; 2>/dev/null || true
+
+echo "  Additional labels updated"
+
 echo "[11/11] Restarting Apache..."
 systemctl restart apache2
 
