@@ -143,16 +143,15 @@ cat > /etc/zabbix/web/zabbix.conf.php << PHPEOF
 \$ZBX_SERVER_NAME      = 'Vizoure NMS';
 \$IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;
 PHPEOF
-
-echo "[7/9] Applying Vizoure branding..."
+echo "[7/9] Starting services..."
+systemctl restart zabbix-server zabbix-agent apache2
+systemctl enable zabbix-server zabbix-agent apache2
+echo "[8/9] Applying Vizoure branding..."
 apt install -y imagemagick python3 curl
+rm -f /tmp/apply-branding.sh
 curl -sSL "${REPO_RAW}/branding/apply-branding.sh" -o /tmp/apply-branding.sh
 chmod +x /tmp/apply-branding.sh
 bash /tmp/apply-branding.sh
-
-echo "[8/9] Starting services..."
-systemctl restart zabbix-server zabbix-agent apache2
-systemctl enable zabbix-server zabbix-agent apache2
 
 echo "[9/9] Configuring via API..."
 ZBX_URL="http://localhost/vizoure/api_jsonrpc.php"
