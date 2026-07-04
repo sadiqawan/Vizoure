@@ -61,6 +61,7 @@ mysql -uroot -e "UPDATE ${DB_NAME}.actions SET name = REPLACE(name, 'Zabbix', 'V
 mysql -uroot -e "UPDATE ${DB_NAME}.triggers SET description = REPLACE(description, 'Zabbix', 'Vizoure') WHERE description LIKE '%Zabbix%';"
 mysql -uroot -e "UPDATE ${DB_NAME}.items SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
 mysql -uroot -e "UPDATE ${DB_NAME}.usrgrp SET name = 'Vizoure Administrators' WHERE name = 'Zabbix administrators';"
+mysql -uroot -e "UPDATE ${DB_NAME}.users SET name='Vizoure', surname='Administrator' WHERE username='Admin';"
 mysql -uroot -e "UPDATE ${DB_NAME}.media_type SET smtp_email = 'noreply@vizoure.local' WHERE smtp_email = 'zabbix@example.com';"
 echo "  Database branding complete"
 

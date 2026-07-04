@@ -219,6 +219,30 @@ echo "  Scattered UI strings updated"
 # ─────────────────────────────────────────────
 # 11. RESTART SERVICES
 # ─────────────────────────────────────────────
+
+# ─────────────────────────────────────────────
+# 11b. ADDITIONAL UI STRING FIXES
+# ─────────────────────────────────────────────
+echo "  Fixing additional UI strings..."
+
+# Global scripts on Zabbix server (System Information page)
+SYSINFO="$UI/app/partials/administration.system.info.php"
+if [ -f "$SYSINFO" ]; then
+    sed -i "s/_('Global scripts on Zabbix server')/_('Global scripts on Vizoure Server')/" "$SYSINFO"
+fi
+
+# Discovery action service type label
+DISCOVERY="$UI/include/discovery.inc.php"
+if [ -f "$DISCOVERY" ]; then
+    sed -i "s/SVC_AGENT => _('Zabbix agent')/SVC_AGENT => _('Vizoure Agent')/" "$DISCOVERY"
+fi
+
+# Item type label (Latest data, Items list)
+ITEMS="$UI/include/items.inc.php"
+if [ -f "$ITEMS" ]; then
+    sed -i "s/ITEM_TYPE_ZABBIX => _('Zabbix agent')/ITEM_TYPE_ZABBIX => _('Vizoure Agent')/" "$ITEMS"
+fi
+
 echo "[11/11] Restarting Apache..."
 systemctl restart apache2
 
