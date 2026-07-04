@@ -45,7 +45,6 @@ apt install -y \
 
 apt install --reinstall -y zabbix-sql-scripts -q
 apt install --reinstall -y zabbix-frontend-php -q
-apt install --reinstall -y zabbix-frontend-php -q
 echo "[5/9] Setting up database..."
 mysql -uroot -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;"
 mysql -uroot -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';"
