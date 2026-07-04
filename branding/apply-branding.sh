@@ -357,6 +357,19 @@ find "$UI/widgets" -name "manifest.json" \
 
 echo "  Additional labels updated"
 
+
+# Page header title fallback fix
+PAGEHEADER="$UI/include/page_header.php"
+if [ -f "$PAGEHEADER" ]; then
+    sed -i "s/: _('Zabbix');/: '';/" "$PAGEHEADER"
+fi
+
+# CHtmlPageHeader Author meta tag
+HTMLHEADER="$UI/include/classes/html/CHtmlPageHeader.php"
+if [ -f "$HTMLHEADER" ]; then
+    sed -i "s/content=\"Zabbix SIA\"/content=\"Vizoure\"/" "$HTMLHEADER"
+fi
+
 echo "[11/11] Restarting Apache..."
 systemctl restart apache2
 
