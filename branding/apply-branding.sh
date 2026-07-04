@@ -47,14 +47,19 @@ echo "  Logo, favicon, touch-icons installed"
 # 2. LOGO SIZE CSS FIX
 # ─────────────────────────────────────────────
 echo "[2/11] Applying logo sizing CSS..."
-
-cat >> "$UI/assets/styles/blue-theme.css" << 'CSSEOF'
-
-.header-logo img, .sidebar-logo img {
+CSS_BLOCK='.header-logo img, .sidebar-logo img {
     max-height: 40px !important;
     width: auto !important;
-}
-CSSEOF
+}'
+for THEME in blue-theme dark-theme hc-dark hc-light; do
+    CSSFILE="$UI/assets/styles/${THEME}.css"
+    if [ -f "$CSSFILE" ]; then
+        echo "$CSS_BLOCK" >> "$CSSFILE"
+        echo "  Applied logo CSS to ${THEME}.css"
+    else
+        echo "  WARNING: ${THEME}.css not found — skipping"
+    fi
+done
 
 # ─────────────────────────────────────────────
 # 3. BRAND CONFIG
