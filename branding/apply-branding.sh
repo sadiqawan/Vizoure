@@ -51,6 +51,14 @@ CSS_BLOCK='.header-logo img, .sidebar-logo img {
     max-height: 40px !important;
     width: auto !important;
 }'
+# Wait up to 30s for CSS files to be available (package unpack timing)
+for i in $(seq 1 6); do
+    if [ -f "$UI/assets/styles/blue-theme.css" ]; then
+        break
+    fi
+    echo "  Waiting for CSS files... (${i}/6)"
+    sleep 5
+done
 for THEME in blue-theme dark-theme hc-dark hc-light; do
     CSSFILE="$UI/assets/styles/${THEME}.css"
     if [ -f "$CSSFILE" ]; then
