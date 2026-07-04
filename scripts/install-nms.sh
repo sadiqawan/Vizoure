@@ -58,6 +58,10 @@ echo "  Applying default branding renames..."
 mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%' AND status=3;"
 mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET vendor_name = 'Vizoure' WHERE vendor_name = 'Zabbix' AND status=3;"
 mysql -uroot -e "UPDATE ${DB_NAME}.actions SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
+mysql -uroot -e "UPDATE ${DB_NAME}.triggers SET description = REPLACE(description, 'Zabbix', 'Vizoure') WHERE description LIKE '%Zabbix%';"
+mysql -uroot -e "UPDATE ${DB_NAME}.items SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
+mysql -uroot -e "UPDATE ${DB_NAME}.usrgrp SET name = 'Vizoure Administrators' WHERE name = 'Zabbix administrators';"
+mysql -uroot -e "UPDATE ${DB_NAME}.media_type SET smtp_email = 'noreply@vizoure.local' WHERE smtp_email = 'zabbix@example.com';"
 
 mysql -uroot -e "SET GLOBAL log_bin_trust_function_creators = 0;"
 

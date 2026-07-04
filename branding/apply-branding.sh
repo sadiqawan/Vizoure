@@ -174,26 +174,3 @@ systemctl restart apache2
 echo ""
 echo "=== Vizoure NMS Branding Applied Successfully ==="
 
-# ─────────────────────────────────────────────
-# 9. SYSTEM INFO WIDGET LABELS
-# ─────────────────────────────────────────────
-echo "[9/9] Fixing System Information widget labels..."
-
-SYSINFO="$UI/app/partials/administration.system.info.php"
-if [ -f "$SYSINFO" ]; then
-    sed -i "s/_('Zabbix server is running')/_('Vizoure NMS Server Status')/" "$SYSINFO"
-    sed -i "s/_('Zabbix server version')/_('Vizoure NMS Version')/" "$SYSINFO"
-
-# ─────────────────────────────────────────────
-# 10. AVAILABILITY LABEL: ZBX → VIZ
-# ─────────────────────────────────────────────
-echo "[10/10] Fixing availability label ZBX -> VIZ..."
-AVAILFILE="$UI/include/classes/html/CHostAvailability.php"
-if [ -f "$AVAILFILE" ]; then
-    sed -i "s/INTERFACE_TYPE_AGENT => 'ZBX'/INTERFACE_TYPE_AGENT => 'VIZ'/" "$AVAILFILE"
-    echo "  Availability label updated to VIZ"
-fi
-    sed -i "s/_('Zabbix frontend version')/_('Vizoure Web Console Version')/" "$SYSINFO"
-    echo "  System Info widget labels updated"
-fi
-
