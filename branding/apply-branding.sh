@@ -249,6 +249,37 @@ if [ -f "$ITEMS" ]; then
 fi
 
 # ─────────────────────────────────────────────
+
+# Timeouts page "Zabbix agent" label
+TIMEOUTS="$UI/app/views/administration.timeouts.edit.php"
+if [ -f "$TIMEOUTS" ]; then
+    sed -i "s/_('Zabbix agent'), 'timeout_zabbix_agent'/_('Vizoure Agent'), 'timeout_zabbix_agent'/" "$TIMEOUTS"
+fi
+
+# Queue overview "Zabbix internal" label
+if [ -f "$ITEMS" ]; then
+    sed -i "s/ITEM_TYPE_INTERNAL => _('Zabbix internal')/ITEM_TYPE_INTERNAL => _('Vizoure Internal')/" "$ITEMS"
+fi
+
+# Media type default email
+MEDIATYPEHELPER="$UI/include/classes/helpers/CMediatypeHelper.php"
+if [ -f "$MEDIATYPEHELPER" ]; then
+    sed -i "s/'smtp_email' => 'zabbix@example.com'/'smtp_email' => 'noreply@vizoure.local'/g" "$MEDIATYPEHELPER"
+fi
+
+# ZBX_DEFAULT_AGENT (browser tab title)
+DEFINES="$UI/include/defines.inc.php"
+if [ -f "$DEFINES" ]; then
+    sed -i "s/define('ZBX_DEFAULT_AGENT', 'Zabbix')/define('ZBX_DEFAULT_AGENT', 'Vizoure')/" "$DEFINES"
+fi
+
+# PHP max_input_time fix
+PHP_INI="/etc/php/8.3/apache2/php.ini"
+if [ -f "$PHP_INI" ]; then
+    sed -i 's/^max_input_time = 60/max_input_time = 300/' "$PHP_INI"
+fi
+
+echo "  Additional UI strings and PHP config updated"
 # 12. URL REBRANDING: zabbix.php → vizoure.php
 # ─────────────────────────────────────────────
 echo "[12/12] Rebranding URLs: zabbix.php -> vizoure.php..."

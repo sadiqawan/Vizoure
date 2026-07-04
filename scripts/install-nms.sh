@@ -232,6 +232,12 @@ if [ -n "$TOKEN" ]; then
         -d '{"jsonrpc":"2.0","method":"dashboard.delete","params":["2","57"],"id":45}' \
         > /dev/null
     echo "  Removed default Zabbix dashboards"
+    curl -s -X POST "$ZBX_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d '{"jsonrpc":"2.0","method":"map.delete","params":["1"],"id":46}' \
+        > /dev/null
+    echo "  Removed default Local network map"
 
     ZBX_TOKEN="$TOKEN" python3 << 'PYEOF'
 import urllib.request, json, os
