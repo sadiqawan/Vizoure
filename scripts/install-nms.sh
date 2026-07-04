@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 REPO_RAW="https://raw.githubusercontent.com/sadiqawan/Vizoure/main"
 DB_NAME="vizoure"
@@ -43,6 +43,7 @@ apt install -y \
     zabbix-sql-scripts \
     zabbix-agent
 
+apt install --reinstall -y zabbix-sql-scripts -q
 echo "[5/9] Setting up database..."
 mysql -uroot -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;"
 mysql -uroot -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';"
@@ -53,6 +54,7 @@ mysql -uroot -e "FLUSH PRIVILEGES;"
 echo "  Importing schema..."
 zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | \
     mysql --default-character-set=utf8mb4 -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME}
+    mysql -uroot -e "SELECT 1 FROM ${DB_NAME}.hosts LIMIT 1;" >/dev/null 2>&1 || { echo "ERROR: Schema import failed"; exit 1; }
 
 echo "  Applying default branding renames to database..."
 mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%' AND status=3;"
