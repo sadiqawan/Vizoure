@@ -287,6 +287,12 @@ if [ -f "$PHP_INI" ]; then
     sed -i 's/^max_input_time = 60/max_input_time = 300/' "$PHP_INI"
 fi
 
+
+# GUI page "Show warning if Zabbix server is down"
+GUIEDIT="$UI/app/views/administration.gui.edit.php"
+if [ -f "$GUIEDIT" ]; then
+    sed -i "s/_('Show warning if Zabbix server is down')/_('Show warning if Vizoure server is down')/" "$GUIEDIT"
+fi
 echo "  Additional UI strings and PHP config updated"
 # 12. URL REBRANDING: zabbix.php → vizoure.php
 # ─────────────────────────────────────────────
