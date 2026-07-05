@@ -1,133 +1,117 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 # ─────────────────────────────────────────────
-# Vizoure NMS — Upstream Upgrade Script
-# Usage: bash scripts/upgrade.sh 7.4.10
+# Vizoure NMS — Upgrade Script
+# Usage: sudo bash upgrade.sh [new_version]
+# Example: sudo bash upgrade.sh 7.4.12
 # ─────────────────────────────────────────────
 
-source /root/vizoure-nms-builde/branding/branding.conf
-
-NEW_VERSION="$1"
-ZABBIX_SOURCE="/root/vizoure-nms-builde/zabbix-source"
-REPO_DIR="/root/vizoure-nms-builde"
-
-# ─────────────────────────────────────────────
-# VALIDATE INPUT
-# ─────────────────────────────────────────────
-if [ -z "$NEW_VERSION" ]; then
-    echo "ERROR: No version specified."
-    echo "Usage: bash scripts/upgrade.sh 7.4.10"
-    exit 1
-fi
+REPO_RAW="https://raw.githubusercontent.com/sadiqawan/Vizoure/main"
+DB_NAME="vizoure"
+DB_USER="vizoure"
+DB_PASSWORD="AES@admin"
+NEW_VERSION="${1:-}"
 
 echo "========================================="
 echo "  Vizoure NMS Upgrade"
-echo "  Current: ${BRAND_VERSION}"
-echo "  Target:  ${NEW_VERSION}"
 echo "========================================="
-echo ""
 
-# Confirm before proceeding
-read -p "Proceed with upgrade to v${NEW_VERSION}? (yes/no): " CONFIRM
-if [ "$CONFIRM" != "yes" ]; then
-    echo "Upgrade cancelled."
-    exit 0
-fi
-
-# ─────────────────────────────────────────────
-# 1. FETCH LATEST TAGS FROM UPSTREAM
-# ─────────────────────────────────────────────
-echo "[1/6] Fetching upstream Zabbix tags..."
-
-cd "$ZABBIX_SOURCE"
-
-# Add upstream remote if not already there
-if ! git remote | grep -q "upstream"; then
-    git remote add upstream https://github.com/zabbix/zabbix.git
-    echo "  Added upstream remote"
-fi
-
-git fetch upstream --tags
-echo "  Tags fetched"
-
-# Verify the requested tag exists
-if ! git tag | grep -q "^${NEW_VERSION}$"; then
-    echo "  ERROR: Tag ${NEW_VERSION} not found in upstream."
-    echo "  Available 7.4.x tags:"
-    git tag | grep "^7.4" | sort
+if [ -z "$NEW_VERSION" ]; then
+    echo "Usage: sudo bash upgrade.sh <new_version>"
+    echo "Example: sudo bash upgrade.sh 7.4.12"
     exit 1
 fi
 
-echo "  Tag ${NEW_VERSION} confirmed available"
-
-# ─────────────────────────────────────────────
-# 2. CREATE NEW BRANCH FROM NEW TAG
-# ─────────────────────────────────────────────
-echo "[2/6] Creating new branch vizoure-nms-${NEW_VERSION}..."
-
-cd "$ZABBIX_SOURCE"
-git checkout "$NEW_VERSION"
-git checkout -b "vizoure-nms-${NEW_VERSION}"
-
-echo "  Branch vizoure-nms-${NEW_VERSION} created"
-
-# ─────────────────────────────────────────────
-# 3. REAPPLY BRANDING PATCH
-# ─────────────────────────────────────────────
-echo "[3/6] Reapplying Vizoure branding patch..."
-
-bash "$REPO_DIR/branding/branding-patch.sh"
-
-echo "  Branding patch applied"
-
-# ─────────────────────────────────────────────
-# 4. UPDATE VERSION IN BRANDING CONFIG
-# ─────────────────────────────────────────────
-echo "[4/6] Updating version in branding.conf..."
-
-sed -i "s/BRAND_VERSION=.*/BRAND_VERSION=\"${NEW_VERSION}\"/" \
-    "$REPO_DIR/branding/branding.conf"
-
-# Update Packer variables
-sed -i "s/vm_version.*=.*/  default = \"${NEW_VERSION}\"/" \
-    "$REPO_DIR/packer/variables.pkr.hcl"
-sed -i "s/vm_name.*=.*/  default = \"vizoure-nms-${NEW_VERSION}\"/" \
-    "$REPO_DIR/packer/variables.pkr.hcl"
-
-echo "  Version updated to ${NEW_VERSION}"
-
-# ─────────────────────────────────────────────
-# 5. COMMIT UPDATED CONFIG TO REPO
-# ─────────────────────────────────────────────
-echo "[5/6] Committing version bump..."
-
-cd "$REPO_DIR"
-git add branding/branding.conf packer/variables.pkr.hcl
-git commit -m "Upgrade: Vizoure NMS ${BRAND_VERSION} → ${NEW_VERSION}"
-git push origin main
-
-echo "  Version bump committed and pushed"
-
-# ─────────────────────────────────────────────
-# 6. TRIGGER REBUILD
-# ─────────────────────────────────────────────
-echo "[6/6] Starting rebuild..."
-
+echo "  Upgrading to Zabbix ${NEW_VERSION}..."
 echo ""
-echo "  Next steps:"
-echo "  1. Rebuild VM images:"
-echo "     cd ${REPO_DIR}/packer"
-echo "     packer build -var-file=variables.pkr.hcl ubuntu-server.pkr.hcl"
-echo ""
-echo "  2. Rebuild Linux agent:"
-echo "     bash ${REPO_DIR}/agent-packaging/linux/build-agent.sh"
-echo ""
-echo "  3. Publish new release:"
-echo "     bash ${REPO_DIR}/scripts/create-release.sh"
+
+# ─────────────────────────────────────────────
+# 1. CHECK CURRENT VERSION
+# ─────────────────────────────────────────────
+echo "[1/6] Checking current version..."
+CURRENT=$(dpkg -l zabbix-server-mysql 2>/dev/null | awk '/zabbix-server-mysql/{print $3}' | cut -d: -f2 | cut -d- -f1)
+echo "  Current version: ${CURRENT:-unknown}"
+echo "  Target version:  ${NEW_VERSION}"
+
+# ─────────────────────────────────────────────
+# 2. BACKUP DATABASE
+# ─────────────────────────────────────────────
+echo "[2/6] Backing up database..."
+BACKUP_FILE="/tmp/vizoure-db-backup-$(date +%Y%m%d-%H%M%S).sql.gz"
+mysqldump -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME} | gzip > "$BACKUP_FILE"
+echo "  Backup saved to: $BACKUP_FILE"
+
+# ─────────────────────────────────────────────
+# 3. STOP SERVICES
+# ─────────────────────────────────────────────
+echo "[3/6] Stopping services..."
+systemctl stop zabbix-server zabbix-agent 2>/dev/null || true
+
+# ─────────────────────────────────────────────
+# 4. UPDATE ZABBIX PACKAGES
+# ─────────────────────────────────────────────
+echo "[4/6] Updating Zabbix packages..."
+ZABBIX_VERSION=$(echo "$NEW_VERSION" | cut -d. -f1-2)
+
+wget -q "https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_${ZABBIX_VERSION}+ubuntu24.04_all.deb" \
+    -O /tmp/zabbix-release-new.deb
+dpkg -i /tmp/zabbix-release-new.deb
+apt update -y -q
+
+apt install -y \
+    zabbix-server-mysql \
+    zabbix-frontend-php \
+    zabbix-apache-conf \
+    zabbix-sql-scripts \
+    zabbix-agent
+
+# Force reinstall to ensure files are properly unpacked
+apt install --reinstall -y zabbix-sql-scripts -q
+apt install --reinstall -y zabbix-frontend-php -q
+
+echo "  Packages updated to ${NEW_VERSION}"
+
+# ─────────────────────────────────────────────
+# 5. RUN DB UPGRADE + REBRANDING
+# ─────────────────────────────────────────────
+echo "[5/6] Upgrading database schema..."
+
+# Zabbix handles schema upgrades automatically on server start
+# But we need to reapply branding to any new DB entries
+
+systemctl start zabbix-server
+sleep 10  # Wait for schema upgrade to complete
+
+echo "  Reapplying database branding..."
+mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%' AND status=3;"
+mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET vendor_name = 'Vizoure' WHERE vendor_name = 'Zabbix' AND status=3;"
+mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET host = REPLACE(host, 'Zabbix', 'Vizoure') WHERE host LIKE '%Zabbix%' AND status=3;"
+mysql -uroot -e "UPDATE ${DB_NAME}.triggers SET description = REPLACE(description, 'Zabbix', 'Vizoure') WHERE description LIKE '%Zabbix%';"
+mysql -uroot -e "UPDATE ${DB_NAME}.items SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
+mysql -uroot -e "UPDATE ${DB_NAME}.actions SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
+mysql -uroot -e "UPDATE ${DB_NAME}.images SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
+echo "  Database branding updated"
+
+# ─────────────────────────────────────────────
+# 6. REAPPLY UI BRANDING
+# ─────────────────────────────────────────────
+echo "[6/6] Reapplying UI branding..."
+systemctl restart apache2
+
+rm -f /tmp/apply-branding.sh
+curl -sSL "${REPO_RAW}/branding/apply-branding.sh" -o /tmp/apply-branding.sh
+chmod +x /tmp/apply-branding.sh
+bash /tmp/apply-branding.sh
+
+systemctl restart zabbix-server zabbix-agent apache2
+systemctl enable zabbix-server zabbix-agent apache2
+
 echo ""
 echo "========================================="
-echo "  Upgrade to v${NEW_VERSION} complete!"
-echo "  Branding reapplied, version bumped."
-echo "  Run the rebuild steps above to publish."
+echo "  Vizoure NMS Upgrade Complete!"
+echo "========================================="
+echo "  Version: ${NEW_VERSION}"
+echo "  Web UI:  http://$(hostname -I | awk '{print $1}')/vizoure"
+echo "  Backup:  ${BACKUP_FILE}"
 echo "========================================="
