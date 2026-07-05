@@ -3,9 +3,8 @@ set -eo pipefail
 
 # ─────────────────────────────────────────────
 # Vizoure NMS — GitHub Release Creator
-# Usage: bash create-release.sh [version]
-# Example: bash create-release.sh 7.4.9
-# Requires: gh CLI authenticated
+# Usage: GITHUB_TOKEN=xxx bash create-release.sh [version]
+# Example: GITHUB_TOKEN=ghp_xxx bash create-release.sh 7.4.9
 # ─────────────────────────────────────────────
 
 VERSION="${1:-7.4.9}"
@@ -25,16 +24,19 @@ echo "========================================="
 # ─────────────────────────────────────────────
 echo "[1/4] Checking prerequisites..."
 
-if ! command -v gh &>/dev/null; then
-    echo "ERROR: gh CLI not installed. Install with:"
-    echo "  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg"
-    echo "  echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' | sudo tee /etc/apt/sources.list.d/github-cli.list"
-    echo "  sudo apt update && sudo apt install gh"
+if [ -z "$GITHUB_TOKEN" ]; then
+    echo "ERROR: GITHUB_TOKEN not set."
+    echo "Usage: GITHUB_TOKEN=ghp_xxx bash create-release.sh 7.4.9"
     exit 1
 fi
 
-if ! gh auth status &>/dev/null; then
-    echo "ERROR: gh CLI not authenticated. Run: gh auth login"
+# Verify token works
+REPO_CHECK=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+    "https://api.github.com/repos/${REPO}" | python3 -c \
+    "import sys,json; r=json.load(sys.stdin); print(r.get('name','ERROR'))" 2>/dev/null)
+
+if [ "$REPO_CHECK" != "Vizoure" ]; then
+    echo "ERROR: Token invalid or repo not accessible. Got: $REPO_CHECK"
     exit 1
 fi
 
@@ -60,12 +62,10 @@ RELEASE_DIR="/tmp/vizoure-release-${VERSION}"
 rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR"
 
-# Copy artifacts
 cp "$DEB_FILE" "$RELEASE_DIR/"
 cp "${BUILD_DIR}/scripts/install-nms.sh" "$RELEASE_DIR/vizoure-install-${VERSION}.sh"
 cp "${BUILD_DIR}/scripts/upgrade.sh" "$RELEASE_DIR/vizoure-upgrade-${VERSION}.sh"
 
-# Generate SHA256 checksums
 cd "$RELEASE_DIR"
 sha256sum * > SHA256SUMS.txt
 
@@ -73,29 +73,32 @@ echo "  Assets prepared:"
 ls -lh "$RELEASE_DIR"
 
 # ─────────────────────────────────────────────
-# 3. CREATE RELEASE NOTES
+# 3. CREATE GITHUB RELEASE
 # ─────────────────────────────────────────────
-echo "[3/4] Creating release notes..."
+echo "[3/4] Creating GitHub Release ${TAG}..."
 
-NOTES_FILE="/tmp/vizoure-release-notes-${VERSION}.md"
-cat > "$NOTES_FILE" << NOTESEOF
-# Vizoure NMS ${VERSION}
+# Delete existing release if it exists
+EXISTING=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+    "https://api.github.com/repos/${REPO}/releases/tags/${TAG}" | \
+    python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('id',''))" 2>/dev/null)
+
+if [ -n "$EXISTING" ]; then
+    echo "  Deleting existing release ${TAG}..."
+    curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+        "https://api.github.com/repos/${REPO}/releases/${EXISTING}" > /dev/null
+fi
+
+# Delete existing tag
+git -C "${BUILD_DIR}" tag -d "$TAG" 2>/dev/null || true
+git -C "${BUILD_DIR}" push origin ":refs/tags/$TAG" 2>/dev/null || true
+
+RELEASE_BODY="# Vizoure NMS ${VERSION}
 
 Vizoure NMS is a fully rebranded network monitoring system based on Zabbix ${VERSION}.
-
-## What's Included
-
-| File | Description |
-|---|---|
-| \`vizoure-agent_${VERSION}_amd64.deb\` | Linux monitoring agent (Debian/Ubuntu) |
-| \`vizoure-install-${VERSION}.sh\` | Full server installation script |
-| \`vizoure-upgrade-${VERSION}.sh\` | Upgrade script from previous version |
-| \`SHA256SUMS.txt\` | Checksums for all files |
 
 ## Quick Install
 
 \`\`\`bash
-# Install Vizoure NMS Server
 curl -sSL https://raw.githubusercontent.com/${REPO}/main/scripts/install-nms.sh -o /tmp/vizoure-install.sh
 sudo bash /tmp/vizoure-install.sh
 \`\`\`
@@ -103,63 +106,54 @@ sudo bash /tmp/vizoure-install.sh
 ## Install Linux Agent
 
 \`\`\`bash
-# Download and install the monitoring agent
 wget https://github.com/${REPO}/releases/download/${TAG}/vizoure-agent_${VERSION}_amd64.deb
 sudo dpkg -i vizoure-agent_${VERSION}_amd64.deb
 \`\`\`
 
 ## Default Credentials
-
 - **Web UI:** \`http://<server-ip>/vizoure\`
 - **Username:** \`admin\`
 - **Password:** \`Vizoure@123\`
 
-## Agent Configuration
-
-Edit \`/etc/vizoure/vizoure_agentd.conf\` and set:
-\`\`\`
-Server=<your-vizoure-server-ip>
-ServerActive=<your-vizoure-server-ip>
-Hostname=<this-host-name>
-\`\`\`
-
-Then restart: \`sudo systemctl restart vizoure-agent\`
-
-## Windows & macOS Agents
-
-Windows (MSI) and macOS (PKG) agent packages are coming in a future release.
-
-## Upgrade from Previous Version
-
+## Upgrade
 \`\`\`bash
 curl -sSL https://raw.githubusercontent.com/${REPO}/main/scripts/upgrade.sh -o /tmp/upgrade.sh
 sudo bash /tmp/upgrade.sh ${VERSION}
-\`\`\`
-NOTESEOF
+\`\`\`"
 
-echo "  Release notes created"
+RELEASE_RESPONSE=$(curl -s -X POST \
+    -H "Authorization: token $GITHUB_TOKEN" \
+    -H "Content-Type: application/json" \
+    "https://api.github.com/repos/${REPO}/releases" \
+    -d "{\"tag_name\":\"${TAG}\",\"name\":\"Vizoure NMS ${VERSION}\",\"body\":$(echo "$RELEASE_BODY" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),\"draft\":false,\"prerelease\":false}")
+
+RELEASE_ID=$(echo "$RELEASE_RESPONSE" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('id','ERROR:'+str(r.get('message',''))))" 2>/dev/null)
+
+if [[ "$RELEASE_ID" == ERROR* ]]; then
+    echo "ERROR creating release: $RELEASE_ID"
+    exit 1
+fi
+
+echo "  Release created (ID: ${RELEASE_ID})"
 
 # ─────────────────────────────────────────────
-# 4. PUBLISH TO GITHUB RELEASES
+# 4. UPLOAD ASSETS
 # ─────────────────────────────────────────────
-echo "[4/4] Publishing GitHub Release ${TAG}..."
+echo "[4/4] Uploading assets..."
 
-cd "${BUILD_DIR}"
+UPLOAD_BASE="https://uploads.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets"
 
-# Delete existing release/tag if it exists
-gh release delete "$TAG" --yes 2>/dev/null || true
-git tag -d "$TAG" 2>/dev/null || true
-git push origin ":refs/tags/$TAG" 2>/dev/null || true
-
-# Create the release
-gh release create "$TAG" \
-    --repo "$REPO" \
-    --title "Vizoure NMS ${VERSION}" \
-    --notes-file "$NOTES_FILE" \
-    "${RELEASE_DIR}/vizoure-agent_${VERSION}_amd64.deb" \
-    "${RELEASE_DIR}/vizoure-install-${VERSION}.sh" \
-    "${RELEASE_DIR}/vizoure-upgrade-${VERSION}.sh" \
-    "${RELEASE_DIR}/SHA256SUMS.txt"
+for FILE in "$RELEASE_DIR"/*; do
+    FILENAME=$(basename "$FILE")
+    echo "  Uploading ${FILENAME}..."
+    RESULT=$(curl -s -X POST \
+        -H "Authorization: token $GITHUB_TOKEN" \
+        -H "Content-Type: application/octet-stream" \
+        "${UPLOAD_BASE}?name=${FILENAME}" \
+        --data-binary "@${FILE}" | \
+        python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('name','ERROR:'+str(r.get('errors',''))))" 2>/dev/null)
+    echo "    OK: $RESULT"
+done
 
 echo ""
 echo "========================================="
