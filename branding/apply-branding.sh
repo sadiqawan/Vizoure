@@ -294,6 +294,12 @@ if [ -f "$GUIEDIT" ]; then
     sed -i "s/_('Show warning if Zabbix server is down')/_('Show warning if Vizoure server is down')/" "$GUIEDIT"
 fi
 
+# Item type "Zabbix trapper" -> "Vizoure Trapper"
+if [ -f "$UI/include/items.inc.php" ]; then
+    sed -i "s/ITEM_TYPE_TRAPPER => _('Zabbix trapper')/ITEM_TYPE_TRAPPER => _('Vizoure Trapper')/" \
+        "$UI/include/items.inc.php"
+fi
+
 # Web scenario agent dropdown "Zabbix" -> "Vizoure"
 HTTPTEST="$UI/include/httptest.inc.php"
 if [ -f "$HTTPTEST" ]; then
