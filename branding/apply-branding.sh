@@ -293,6 +293,12 @@ GUIEDIT="$UI/app/views/administration.gui.edit.php"
 if [ -f "$GUIEDIT" ]; then
     sed -i "s/_('Show warning if Zabbix server is down')/_('Show warning if Vizoure server is down')/" "$GUIEDIT"
 fi
+
+# Web scenario agent dropdown "Zabbix" -> "Vizoure"
+HTTPTEST="$UI/include/httptest.inc.php"
+if [ -f "$HTTPTEST" ]; then
+    sed -i "s/ZBX_DEFAULT_AGENT => 'Zabbix'/ZBX_DEFAULT_AGENT => 'Vizoure'/" "$HTTPTEST"
+fi
 echo "  Additional UI strings and PHP config updated"
 # 12. URL REBRANDING: zabbix.php → vizoure.php
 # ─────────────────────────────────────────────
