@@ -82,10 +82,46 @@ pattern we're trying to eliminate). Then work through the verification checklist
 | API responds | `curl -s -X POST http://<VM-IP>/vizoure/api_jsonrpc.php -H "Content-Type: application/json-rpc" -d '{"jsonrpc":"2.0","method":"apiinfo.version","params":{},"id":1}'` | A JSON `result` with a version string, confirming the JSON-RPC endpoint from `md/02` Layer 3 is actually reachable before trying any authenticated call |
 | Branding applied — title | `curl -s http://<VM-IP>/vizoure/ \| grep -io '<title>[^<]*'` | Contains "Vizoure NMS", not "Zabbix" |
 | Branding applied — login page | `curl -s http://<VM-IP>/vizoure/ \| grep -ci zabbix` | `0` (no leftover "Zabbix" string in the rendered login page) |
-| Branding applied — favicon | `curl -sI http://<VM-IP>/vizoure/favicon.ico` | `200`, and byte-compare against `branding/logos/favicon.ico` if you want a strict check |
+| Branding applied — favicon | `curl -sI http://<VM-IP>/vizoure/favicon.ico` **and** `curl -s http://<VM-IP>/vizoure/favicon.ico \| md5sum` compared against `branding/logos/favicon.ico`'s own md5 | `200` AND matching md5 — `200` alone is not enough, it returns `200` for the *stock* Zabbix favicon too |
 | DB renames applied | `mysql -uroot -e "SELECT name FROM vizoure.usrgrp WHERE name LIKE '%Administrator%';"` | Returns "Vizoure Administrators", confirms Layer 1 from `md/02` ran |
 | Admin account | `curl ... user.login` with `admin`/`<WEB_ADMIN_PASSWORD>` (per `md/02` Layer 3) | Returns a valid auth token |
 | Agent reporting | `sudo zabbix_get -s 127.0.0.1 -k agent.ping` (or check **Monitoring → Latest data** in the UI) | `1` |
+| **Page title never says "Warning" or "Zabbix"** | `curl -s <url> \| grep -io '<title>[^<]*'` on **every** page checked below, not just the login page | Never `Warning [refreshed every 30 sec.]` — that exact title is Zabbix's own router-failure/system-warning fallback view, not a real page, and HTTP still returns `200` for it (⚠️ added 2026-10-09 after an incident where this exact gap let a fully broken install pass every curl check below) |
+
+### Authenticated session walk — mandatory, added 2026-10-09
+
+**Why:** every check above can return `HTTP/1.1 200` and a plausible-looking title/favicon on the *login* page while the authenticated app underneath is completely broken — this is exactly what happened on 2026-10-09 (see `md/04` `ISS-26`): the login page looked fine, but every post-login route served Zabbix's generic "Warning"/router-failure view instead of real content, and a plain `curl -sI` check never logs in, so it never saw it.
+
+**Verified working as a catch, 2026-10-09**: run against two full install→re-run cycles after the `ISS-07`/`ISS-08`/`ISS-26`/`ISS-29` fixes — all 4 pages (dashboard/hosts/problems/maps) came back with correct titles and zero fallback-page matches on every one of the 4 checks across both cycles. Note the blanket `grep -ci "warning\|page not found"` count is **not** reliable on its own — Zabbix's UI legitimately uses "warning" as a severity-level CSS class name (`.warning-bg`, `msg-warning`) on real pages, producing false positives. Use the precise check instead: `grep -c "Warning \[refreshed every"` for the exact fallback-page title string.
+
+Do this with a real cookie jar, not just `user.login` via the JSON-RPC API (that only proves the *API* works, not the *web frontend's* routing):
+
+```bash
+COOKIEJAR=/tmp/vz-verify-cookies.txt
+rm -f "$COOKIEJAR"
+# 1. Log in through the actual web form (not the API)
+curl -s -c "$COOKIEJAR" -b "$COOKIEJAR" -L "http://<VM-IP>/vizoure/index.php" \
+    -d "name=admin&password=<WEB_ADMIN_PASSWORD>&enter=Sign+in" -o /tmp/login.html
+# 2. Dashboard — the exact route that broke on 2026-10-09
+curl -s -c "$COOKIEJAR" -b "$COOKIEJAR" "http://<VM-IP>/vizoure/vizoure.php?action=dashboard.view" -o /tmp/dash.html
+# 3-5. At least 3 more authenticated pages
+curl -s -c "$COOKIEJAR" -b "$COOKIEJAR" "http://<VM-IP>/vizoure/vizoure.php?action=host.view" -o /tmp/hosts.html
+curl -s -c "$COOKIEJAR" -b "$COOKIEJAR" "http://<VM-IP>/vizoure/vizoure.php?action=problem.view" -o /tmp/problems.html
+curl -s -c "$COOKIEJAR" -b "$COOKIEJAR" "http://<VM-IP>/vizoure/sysmaps.php" -o /tmp/maps.html
+# Check EVERY one of the 4 saved files, not just HTTP status:
+for f in dash hosts problems maps; do
+    echo "--- $f ---"
+    grep -io '<title>[^<]*' "/tmp/$f.html"
+    grep -ci "warning\|page not found" "/tmp/$f.html"
+done
+```
+Expected: each page's title reflects the actual page (e.g. "Dashboard", "Hosts", "Problems"), not "Warning"; the `warning\|page not found` grep count is `0` for all four. Any non-zero count or a "Warning" title means the authenticated app is broken even though every earlier HTTP-status-only check passed.
+
+### Never leave a destructive test mid-way — added 2026-10-09
+If a test deliberately re-runs `install-nms.sh`/`upgrade.sh` against an already-installed system (e.g. to exercise a non-idempotency code path on purpose, as done for `ISS-09`/`ISS-10`'s verification), **and it fails or aborts partway through** (expected — `ISS-07` means a second run is not idempotent), **do not leave the VM in that half-modified state.** Specifically: `apt install --reinstall` steps (present in both scripts) restore package-shipped files to stock content — including files `apply-branding.sh` has already patched (`ZBase.php`, `favicon.ico`, etc.) — and if the script then aborts before reaching its own branding re-application step, those files stay reverted with no error or warning shown anywhere. This is exactly what happened on 2026-10-09 (`md/04` `ISS-26`). Either:
+- Ask the user to revert the hypervisor snapshot before any further testing, or
+- Run a full clean re-install (not just the one script step that needs re-testing) to put the branding back, and re-verify with the authenticated session walk above before considering the VM usable again.
+Never assume a partially-failed deliberate test left the system otherwise intact just because the specific error you were testing for occurred as expected.
 
 ### Step 4 — Show you the verification output
 Every command's actual output goes to you verbatim (redacting nothing except
