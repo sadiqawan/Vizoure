@@ -149,6 +149,37 @@ The upgrade script automatically:
 
 ---
 
+## Recovery
+
+Neither `install-nms.sh` nor `upgrade.sh` has an automatic rollback — if either
+fails partway through, it stops (now with an error message naming the line it
+failed at) but does not undo anything it already did. Recovery is manual:
+
+- **Database backups**: `upgrade.sh` always takes one before touching anything, at
+  `/tmp/vizoure-db-backup-<date>.sql.gz`. `install-nms.sh` only takes one if it
+  detects an existing database (e.g. a re-run) — a genuinely fresh install has
+  nothing to back up yet. To restore: `gunzip -c <backup file> | mysql -uroot
+  vizoure`.
+- **The original `Admin`/`zabbix` account's password**: `install-nms.sh` randomizes
+  and disables this account near the end of a successful run, and saves the new
+  random password to `/root/.vizoure-original-admin-password` (root-only, `0600`)
+  instead of discarding it — read that file if you ever need to log back in as the
+  original account.
+- **A script that failed partway through steps 1–4 of `install-nms.sh`** (before
+  the database import) is close to safe to just re-run after fixing whatever caused
+  the failure — see the script's own `[n/9]` progress markers in its output to tell
+  how far it got.
+- **A script that failed at or after the database import**: don't blindly re-run.
+  Check whether `${DB_NAME}` (`vizoure`) already has tables
+  (`mysql -uroot -e "SHOW TABLES FROM vizoure;"`) — if so, restore from the backup
+  above (or drop the database) before retrying, since the schema import isn't
+  idempotent.
+- There is currently no VM/host teardown script in this repo (see `md/04`
+  `ISS-23` if you have the project's internal docs) — if you need a clean slate and
+  a hypervisor snapshot isn't available, the safest reset is a fresh OS install.
+
+---
+
 ## Build Artifacts
 
 ### Build Linux Agent (.deb)

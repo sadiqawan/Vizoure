@@ -7,6 +7,11 @@ set -eo pipefail
 # Example: sudo bash upgrade.sh 7.4.12
 # ─────────────────────────────────────────────
 
+# ISS-10 fix (md/04): no automatic rollback exists — this at least stops the
+# script from leaving a silent, undiagnosed partial state (e.g. services left
+# stopped). See README.md's "Recovery" section for the manual restore steps.
+trap 'echo "ERROR: upgrade.sh failed at line $LINENO. A pre-upgrade backup should exist at ${BACKUP_FILE:-/tmp/vizoure-db-backup-*.sql.gz} — see README.md Recovery section before retrying." >&2' ERR
+
 REPO_RAW="https://raw.githubusercontent.com/sadiqawan/Vizoure/main"
 DB_NAME="vizoure"
 DB_USER="vizoure"

@@ -1,6 +1,12 @@
 #!/bin/bash
 set -eo pipefail
 
+# ISS-10 fix (md/04): no automatic rollback exists — this at least stops the
+# script from leaving a silent, undiagnosed partial state. See md/05-test-vm-
+# workflow.md in the Vizoure repo, and README.md's "Recovery" section, for the
+# manual recovery steps that go with this failure point.
+trap 'echo "ERROR: install-nms.sh failed at line $LINENO. Check for a pre-existing backup under /tmp/vizoure-db-backup-*.sql.gz before retrying — see README.md Recovery section." >&2' ERR
+
 REPO_RAW="https://raw.githubusercontent.com/sadiqawan/Vizoure/main"
 DB_NAME="vizoure"
 DB_USER="vizoure"
@@ -51,6 +57,17 @@ mysql -uroot -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED B
 mysql -uroot -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
 mysql -uroot -e "SET GLOBAL log_bin_trust_function_creators = 1;"
 mysql -uroot -e "FLUSH PRIVILEGES;"
+
+# ISS-09 fix (md/04): if this database already has tables (a re-run, or an
+# in-place reinstall), back it up before the schema import below touches it.
+# A genuinely fresh install has nothing to back up yet — skip quietly.
+# Mirrors upgrade.sh's step [2/6] backup.
+if mysql -uroot -e "SELECT 1 FROM ${DB_NAME}.hosts LIMIT 1;" >/dev/null 2>&1; then
+    BACKUP_FILE="/tmp/vizoure-db-backup-$(date +%Y%m%d-%H%M%S).sql.gz"
+    echo "  Existing database detected — backing up to ${BACKUP_FILE} before continuing..."
+    mysqldump -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME} | gzip > "$BACKUP_FILE"
+    echo "  Backup saved to: $BACKUP_FILE"
+fi
 
 echo "  Importing schema..."
 zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | \
@@ -286,12 +303,17 @@ PYEOF
         -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"admin","password":"Vizoure@123"},"id":11}' \
         | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('result',''))" 2>/dev/null)
     if [ -n "$NEWTOKEN" ]; then
+        DISABLED_PW=$(openssl rand -base64 24)
         curl -s -X POST "$ZBX_URL" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $NEWTOKEN" \
-            -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.update\",\"params\":{\"userid\":\"1\",\"passwd\":\"$(openssl rand -base64 24)\"},\"id\":12}" \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.update\",\"params\":{\"userid\":\"1\",\"passwd\":\"$DISABLED_PW\"},\"id\":12}" \
             > /dev/null
-        echo "  Old default account disabled"
+        # ISS-09 fix (md/04): persist the randomized password instead of
+        # discarding it — root-only file (umask makes it 600 on creation),
+        # never echoed to stdout/stderr/logs.
+        (umask 077; echo "$DISABLED_PW" > /root/.vizoure-original-admin-password)
+        echo "  Old default account disabled (new password saved to /root/.vizoure-original-admin-password, root-only)"
     fi
 else
     echo "  WARNING: Could not login — change Admin password manually"

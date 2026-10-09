@@ -20,4 +20,9 @@ autoinstall:
     - wget
     - git
   late-commands:
-    - curtin in-target --target=/target -- bash -c "curl -sSL https://raw.githubusercontent.com/sadiqawan/Vizoure/main/scripts/install-nms.sh | bash"
+    # ISS-01 fix (md/04): download to a file first, verify it's non-empty and
+    # actually a shell script, THEN run it — never pipe curl straight into bash.
+    - curtin in-target --target=/target -- curl -fsSL -o /tmp/install-nms.sh https://raw.githubusercontent.com/sadiqawan/Vizoure/main/scripts/install-nms.sh
+    - curtin in-target --target=/target -- test -s /tmp/install-nms.sh
+    - curtin in-target --target=/target -- bash -c "head -c2 /tmp/install-nms.sh | grep -q '#!'"
+    - curtin in-target --target=/target -- bash /tmp/install-nms.sh

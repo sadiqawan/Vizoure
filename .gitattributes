@@ -1,0 +1,22 @@
+# Force LF line endings for text files in this repo, regardless of any
+# contributor's local core.autocrlf setting. Scripts in this repo are run
+# directly on Linux (scp'd to a VM, piped into cloud-init, etc.) — CRLF
+# silently breaks them (e.g. `set -eo pipefail\r` fails with "invalid option
+# name" under bash). See md/04 for the incident this fixed.
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.md text eol=lf
+*.hcl text eol=lf
+*.conf text eol=lf
+*.php text eol=lf
+*.ps1 text eol=lf
+*.wxs text eol=lf
+
+*.ico binary
+*.png binary
+*.deb binary
+*.iso binary
+*.ova binary
+*.ovf binary
+*.vmx binary

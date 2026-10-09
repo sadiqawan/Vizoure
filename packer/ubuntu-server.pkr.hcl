@@ -61,10 +61,15 @@ build {
   sources = ["source.vmware-iso.vizoure_nms"]
 
   # Step 1: Run Vizoure install script
+  # ISS-02 fix (md/04): download to a file first, verify it's non-empty and
+  # actually a shell script, THEN run it — never pipe curl straight into bash.
   provisioner "shell" {
     inline = [
       "echo '=== Vizoure NMS Packer Provisioner ==='",
-      "curl -sSL https://raw.githubusercontent.com/sadiqawan/Vizoure/main/scripts/install-nms.sh | sudo bash"
+      "curl -fsSL -o /tmp/install-nms.sh https://raw.githubusercontent.com/sadiqawan/Vizoure/main/scripts/install-nms.sh",
+      "test -s /tmp/install-nms.sh",
+      "head -c2 /tmp/install-nms.sh | grep -q '#!'",
+      "sudo bash /tmp/install-nms.sh"
     ]
   }
 
