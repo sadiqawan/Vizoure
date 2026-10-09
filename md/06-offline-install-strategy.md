@@ -73,13 +73,14 @@ hours — closer to compiling a mid-sized C project than a browser or kernel. �
 confirmation: not actually timed.
 
 ### Repo size impact
-A 7.4.x source tarball is in the same ballpark as the current `zabbix-master/`
-(~390MB uncompressed; the tarball itself compresses to roughly 50–80MB — ⚠️ needs
-confirmation on the exact figure for 7.4.x specifically). Either way, **this should
-never be committed into git directly** (near/over the 100MB single-file limit even
-compressed, and git would keep every version forever). It belongs in GitHub Releases
-as a downloadable asset, fetched by a vendor script into the gitignored
-`zabbix-master/`/`zabbix-source/` directory — never into tracked history.
+**Confirmed live (2026-10-09)** against `cdn.zabbix.com/zabbix/sources/stable/7.4/`:
+the compressed source tarball is **~41–42MB** across the versions checked
+(`7.4.9`: 43,490,201 bytes; `7.4.11`: 43,533,153 bytes; `7.4.15`: 44,301,259 bytes —
+grows slightly release to release, as expected). Smaller than this doc originally
+guessed. Still **should never be committed into git directly** (near the 100MB
+single-file warning threshold, and git would keep every version forever) — belongs
+in GitHub Releases as a downloadable asset, fetched by a vendor script into the
+gitignored `zabbix-master/`/`zabbix-source/` directory, never into tracked history.
 
 ### PHP/DB/OS dependencies
 - **Scenario A** (Ubuntu mirrors fine): build-time needs `build-essential`,
@@ -129,16 +130,21 @@ None — nothing is compiled. This is the fastest option by far (install time on
 no build step at all).
 
 ### Repo size impact
-The 5 Zabbix `.deb`s alone are roughly the same size as what we saw purged from the
-test VM (~105MB freed by removing them, per the Part 2 verification) — each
-individual `.deb` is well under the 100MB git limit, but **still shouldn't go into
-git** on principle (binary churn on every version bump). GitHub Releases again, same
-as Option 1's tarball and exactly how `create-release.sh` already ships the agent
-`.deb` — this option fits the repo's existing release mechanism with zero new
-tooling. Scenario B's full dependency closure (mysql-server pulls in a large chain —
-recall the stuck unattended-upgrade on the test VM queued ~140 packages for a routine
-patch) could run several hundred MB to ~1GB; still fine as Release assets (not a git
-concern), but meaningfully larger to maintain/update than just the 5 Zabbix packages.
+**Confirmed live (2026-10-09)** against `repo.zabbix.com`'s actual `noble` Packages
+index: the 5 Zabbix `.deb`s (`zabbix-server-mysql`, `zabbix-agent`,
+`zabbix-frontend-php`, `zabbix-sql-scripts`, `zabbix-apache-conf`) total only
+**~19.8MB** at the current `7.4.15` (1.85MB + 0.30MB + 9.42MB + 8.21MB + 0.01MB), plus
+the tiny `zabbix-release` bootstrap `.deb` (8.5KB). Far smaller than this doc
+originally guessed (that earlier figure conflated total disk space *freed on the VM*,
+which included MySQL/Apache/PHP's own footprint, with the much smaller Zabbix-only
+download size). Each is well under the 100MB git limit regardless, but **still
+shouldn't go into git** on principle (binary churn on every version bump) — GitHub
+Releases, same as Option 1's tarball and exactly how `create-release.sh` already
+ships the agent `.deb`. Scenario B's full Ubuntu-side dependency closure (apache2 +
+mysql-server + the php8.3 extensions this project needs, measured directly via
+`apt-get install --print-uris` on the test VM) is **52 packages totaling ~35.8MB** —
+also much smaller than this doc originally guessed. **Combined total for a fully
+self-contained offline package set (Scenario B): ~19.8MB + ~35.8MB ≈ 55.6MB.**
 
 ### PHP/DB/OS dependencies
 - **Scenario A:** trivial — apt still resolves Apache/PHP/MySQL from Ubuntu's own
@@ -153,14 +159,17 @@ concern), but meaningfully larger to maintain/update than just the 5 Zabbix pack
 ### Upgrades
 Re-download a newer set of `.deb`s from a reachable `repo.zabbix.com` periodically
 (whenever it *is* reachable) and re-publish as a new Release — this is explicitly a
-"snapshot the version we trust" workflow, same spirit as a container base image
-pin. **Important practical constraint discovered during this analysis:** vendor apt
-repos typically only keep the *current* point release of a channel in their live
-pool — once `7.4.12` ships, `7.4.11`'s `.deb`s are likely to disappear from
-`repo.zabbix.com` entirely. That means **grabbing today's `.deb`s now and parking
-them in a Release is the only way to guarantee a specific point release stays
-available**, regardless of the offline scenario — this is true even without Rule B,
-just for reproducibility.
+"snapshot the version we trust" workflow, same spirit as a container base image pin.
+**Correction from this session's earlier draft:** `repo.zabbix.com` does **not**
+actually drop old point releases — live-checked `noble`'s Packages index and found
+every `7.4.x` release from `7.4.0` through the current `7.4.15` still listed
+simultaneously (confirmed by version string, e.g. `7.4.9-1+ubuntu24.04` and
+`7.4.11-1+ubuntu24.04` are both still present today). So there's no urgent
+"grab it now before it disappears" pressure — but vendoring the exact `.deb`s used
+is still the right call for genuine independence from `repo.zabbix.com` being
+reachable *at all*, which is the actual Rule B scenario, and for guaranteed
+reproducibility regardless of whether the vendor happens to keep old releases
+forever.
 
 ### Version pinned
 Whatever `.deb`s were downloaded and published — same precision as Option 1, but
@@ -213,10 +222,13 @@ fully separate, independently-updated efforts.
 
 Two independent sources, so a future outage of one doesn't block the other:
 
-1. **Zabbix's own source tarball** — published per-version at a predictable CDN path
-   under `cdn.zabbix.com`/`repo.zabbix.com` (exact URL for a given point release not
-   verified live in this session — ⚠️ needs confirmation of the precise path at fetch
-   time, e.g. via Zabbix's own "Downloads → Source code" page).
+1. **Zabbix's own source tarball** — **confirmed live (2026-10-09)** at
+   `https://cdn.zabbix.com/zabbix/sources/stable/7.4/zabbix-<version>.tar.gz` (e.g.
+   `zabbix-7.4.11.tar.gz`); returned `200 OK` for `7.4.9`, `7.4.11`, and `7.4.15`
+   when checked. This is the URL `repo.zabbix.com`'s own `.sources` config points at
+   conceptually (same `repo.zabbix.com`/`cdn.zabbix.com` family), so it shares fate
+   with that infrastructure being reachable at all — see source 2 for a genuinely
+   independent fallback.
 2. **Zabbix's upstream GitHub mirror** (`github.com/zabbix/zabbix`), tagged per
    release — a genuinely separate piece of infrastructure from `repo.zabbix.com`, so
    it survives a `repo.zabbix.com`-specific outage. ⚠️ needs confirmation of the exact
@@ -249,7 +261,78 @@ not resolved here (analysis only):
   really the same open question as `md/04` `ISS-14` (should the whole project pin to
   an exact version instead of floating on the `7.4` channel?). Resolving that
   question first would make "which source tree to vendor" a trivial follow-on
-  decision rather than a separate one.
+  decision rather than a separate one. See the next section for the actual version
+  recommendation.
+
+## Version pinning recommendation (live research, 2026-10-09)
+
+### What's actually available right now
+Live-checked `repo.zabbix.com`'s `7.4/stable` Packages index for `noble`: the
+**current latest is `7.4.15-1+ubuntu24.04`**. Every point release back to `7.4.0` is
+still listed in the same index (see the correction under Option 2's "Upgrades" above)
+— `7.4.9-1+ubuntu24.04` and `7.4.11-1+ubuntu24.04` (the two reference points asked
+about) are both still present today, not just `7.4.15`.
+
+### Security comparison: `7.4.9` vs `7.4.11` vs `7.4.15`
+Checked Zabbix's own release notes and third-party CVE trackers for the 7.4 branch.
+Four CVEs turned up for the general 7.4.x era:
+
+| CVE | Issue | Fixed in (7.4 branch) |
+|---|---|---|
+| CVE-2026-23919 | Server/proxy JS context reuse — data leak between hosts a non-super admin shouldn't see | `7.4.3` |
+| CVE-2026-23920 | Host/event action script regex validation bypass via newline injection → shell command injection | `7.4.6` |
+| CVE-2026-23921 | Blind SQL injection via API `sortfield` param → session/admin compromise | `7.4.6` |
+| CVE-2026-1199 | Login-lockout counter miscounts simultaneous failed attempts, weakening brute-force protection | ⚠️ needs confirmation — exact 7.4-branch fixed-in version not found in this session's research |
+
+**All three confirmed CVEs are already fixed by `7.4.6`** — meaning `7.4.9`, `7.4.11`,
+and `7.4.15` are all equally safe from them; there is **no security reason to prefer
+one over another** among these three specific candidates.
+
+### Stability comparison
+`7.4.15`'s own release notes (vs. `7.4.11`) list real operational bug fixes not
+present in `7.4.11`: a fixed agent redirect loop in proxy groups when the server goes
+offline, a fixed memory leak in item queries when expanding user macros, and a fixed
+PHP 8.5 runtime error in the frontend. These are genuine reasons to prefer newer over
+older, all else equal.
+
+### What the branding scripts were actually tested against
+This is the deciding factor. `7.4.9` is what the repo's docs *claim*, but it has
+**never actually been installed or exercised by this project** — `install-nms.sh`
+floats on the `7.4` channel, so nothing has ever pinned or verified against `7.4.9`
+specifically. `7.4.15` is the newest and has real bug-fix advantages, but likewise
+**has never been exercised against `apply-branding.sh`** in this project.
+**`7.4.11` is the one version that has actually been installed and had
+`apply-branding.sh`'s patches applied against it**, for real, on the test VM (the
+branded `vizoure.conf`, `zabbix.conf.php`, and installed `/usr/share/zabbix` tree we
+found and backed up on 2026-10-09 were all running on `7.4.11`).
+
+### Recommendation: pin to `7.4.11`
+Primary reason: it's the only one of the three with actual empirical evidence that
+this project's branding scripts work against it. No security argument favors `7.4.15`
+over it (same CVE-fix floor). The cost of **not** picking `7.4.15` is giving up three
+real bug fixes (agent redirect loop, memory leak, PHP 8.5 compat) that don't appear to
+affect this project's own usage pattern today (single-node install, PHP 8.3 not 8.5).
+
+**Reasonable alternative, if you'd rather have the newest stability fixes**: pin to
+`7.4.15` instead, accepting that `apply-branding.sh` would need a fresh
+install-and-verify pass against it (per `md/05`'s workflow) before trusting it, since
+it's never been exercised in this project. Not recommended as the default pick for
+that reason alone, but not a bad choice if validated first.
+
+**This is explicitly your call to make, per your own instruction — nothing has been
+downloaded.**
+
+### DECISION (2026-10-09): pin `7.4.15`, fallback `7.4.11`
+
+The user chose **`7.4.15` as primary**, with **`7.4.11` as fallback if branding
+breaks on it** — the inverse of this document's own recommendation above (which
+favored `7.4.11` as primary, `7.4.15` as an unvalidated alternative). Decision stands
+as given; the analysis above is left as-written for the reasoning trail, not revised
+to match. Practical effect: `7.4.15` must now go through the validate-against-
+`apply-branding.sh` step this document flagged as outstanding for it, with `7.4.11`
+(already known-good from the 2026-10-09 VM evidence) as the documented fallback if
+that validation fails. This resolves `md/04` `ISS-11`'s open "which version" question
+— see that file for the corresponding update.
 
 ## Recommendation: Option 3 (Hybrid)
 
@@ -273,3 +356,115 @@ not resolved here (analysis only):
 dependency surface than Option 2, for no speed benefit in the common case) or Option 2
 alone (zero fallback if a prebuilt package genuinely isn't available for some future
 target environment — e.g. an architecture this repo doesn't anticipate today).
+
+## Where the offline package set should live
+
+**Proposal:** one GitHub Release per pinned Zabbix version (reusing
+`create-release.sh`'s existing tag convention, e.g. `offline-7.4.11`, separate from
+the product's own `v7.4.9`-style release tags so an offline-bundle refresh doesn't
+need to cut a new product release), containing:
+- The 6 Zabbix `.deb`s (`zabbix-release`, `zabbix-server-mysql`, `zabbix-agent`,
+  `zabbix-frontend-php`, `zabbix-sql-scripts`, `zabbix-apache-conf`).
+- The 52 Ubuntu dependency `.deb`s (Appendix below has the exact list).
+- The source tarball (`zabbix-<version>.tar.gz`), for Option 1/3's build fallback.
+- A `SHA256SUMS.txt` covering every file above, generated the same way
+  `create-release.sh` already does for the agent `.deb` today (`sha256sum * >
+  SHA256SUMS.txt`) — so the install script can verify each download against it before
+  use, which also directly satisfies the checksum-verification fix this project
+  already owes itself from `md/04`'s `ISS-01`–`ISS-04`.
+
+This reuses 100% of the repo's existing release mechanism — no new infrastructure,
+no Git LFS, nothing committed to git history.
+
+---
+
+## Appendix — exact package manifest (captured live, 2026-10-09)
+
+### Zabbix packages (current latest, `7.4.15-1+ubuntu24.04`, from `repo.zabbix.com`'s `noble` Packages index)
+
+| Package | Size |
+|---|---|
+| `zabbix-release` (bootstrap) | 8,524 B |
+| `zabbix-server-mysql` | 1,848,088 B |
+| `zabbix-agent` | 300,936 B |
+| `zabbix-frontend-php` | 9,416,412 B |
+| `zabbix-sql-scripts` | 8,212,628 B |
+| `zabbix-apache-conf` | 9,140 B |
+| **Total** | **~19.8MB** |
+
+### Ubuntu-side dependency closure (52 packages — `apache2`, `mysql-server`, `php8.3` + extensions; sizes via `apt-get install --print-uris` on the test VM, 2026-10-09, Ubuntu 24.04/noble)
+
+| Package | Size (bytes) |
+|---|---|
+| apache2 | 90,238 |
+| apache2-bin | 1,337,886 |
+| apache2-data | 163,290 |
+| apache2-utils | 99,904 |
+| libapache2-mod-php8.3 | 1,850,334 |
+| libapr1t64 | 107,650 |
+| libaprutil1-dbd-sqlite3 | 11,246 |
+| libaprutil1-ldap | 9,120 |
+| libaprutil1t64 | 92,674 |
+| libcgi-fast-perl | 10,300 |
+| libcgi-pm-perl | 184,594 |
+| libclone-perl | 10,728 |
+| libencode-locale-perl | 11,568 |
+| libevent-core-2.1-7t64 | 91,942 |
+| libevent-pthreads-2.1-7t64 | 7,988 |
+| libfcgi0t64 | 27,030 |
+| libfcgi-bin | 11,154 |
+| libfcgi-perl | 21,684 |
+| libhtml-parser-perl | 86,028 |
+| libhtml-tagset-perl | 11,274 |
+| libhtml-template-perl | 60,152 |
+| libhttp-date-perl | 10,564 |
+| libhttp-message-perl | 78,240 |
+| libio-html-perl | 15,870 |
+| liblua5.4-0 | 166,226 |
+| liblwp-mediatypes-perl | 20,102 |
+| libmecab2 | 200,902 |
+| libprotobuf-lite32t64 | 238,492 |
+| libtimedate-perl | 33,972 |
+| liburi-perl | 88,040 |
+| mecab-ipadic | 6,717,648 |
+| mecab-ipadic-utf8 | 4,384 |
+| mecab-utils | 4,804 |
+| mysql-client-8.0 | 22,446 |
+| mysql-client-core-8.0 | 2,739,738 |
+| mysql-common | 6,746 |
+| mysql-server | 9,524 |
+| mysql-server-8.0 | 1,442,602 |
+| mysql-server-core-8.0 | 17,489,224 |
+| php8.3-bcmath | 16,614 |
+| php8.3-cli | 1,915,292 |
+| php8.3-common | 741,968 |
+| php8.3-curl | 40,314 |
+| php8.3-gd | 31,160 |
+| php8.3-ldap | 33,578 |
+| php8.3-mbstring | 511,980 |
+| php8.3-mysql | 126,660 |
+| php8.3-opcache | 371,548 |
+| php8.3-readline | 13,458 |
+| php8.3-xml | 126,062 |
+| php-common | 13,910 |
+| ssl-cert | 17,826 |
+| **Total (52 packages)** | **~35.8MB (37,546,678 B)** |
+
+Notably the single largest item is `mysql-server-core-8.0` (~16.7MB); `mecab-ipadic`
+(~6.4MB, a Japanese-language dictionary pulled in transitively) is the second
+largest and somewhat surprising — it's not something Vizoure needs directly, it
+rides in via the dependency chain. ⚠️ needs confirmation exactly which package pulls
+it in, if a leaner closure is ever wanted.
+
+### Source tarball (for Option 1/3's build fallback)
+
+| Version | Size |
+|---|---|
+| `7.4.9` | 43,490,201 B (~41.5MB) |
+| `7.4.11` | 43,533,153 B (~41.5MB) |
+| `7.4.15` | 44,301,259 B (~42.3MB) |
+
+### Grand total for a fully self-contained offline package set
+~19.8MB (Zabbix) + ~35.8MB (Ubuntu runtime deps) + ~42MB (source tarball, for the
+Option 1/3 fallback path) ≈ **~98MB total** — comfortably small, well within a single
+GitHub Release.
