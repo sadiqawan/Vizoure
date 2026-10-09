@@ -1,5 +1,6 @@
 dist/
 zabbix-source/
+zabbix-master/
 build/
 *.deb
 *.msi
