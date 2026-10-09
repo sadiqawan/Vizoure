@@ -1,6 +1,7 @@
 dist/
 zabbix-source/
 zabbix-master/
+zabbix-src-7.4.15/
 build/
 *.deb
 *.msi
