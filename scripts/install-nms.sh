@@ -58,21 +58,53 @@ mysql -uroot -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost
 mysql -uroot -e "SET GLOBAL log_bin_trust_function_creators = 1;"
 mysql -uroot -e "FLUSH PRIVILEGES;"
 
-# ISS-09 fix (md/04): if this database already has tables (a re-run, or an
-# in-place reinstall), back it up before the schema import below touches it.
-# A genuinely fresh install has nothing to back up yet — skip quietly.
-# Mirrors upgrade.sh's step [2/6] backup.
-if mysql -uroot -e "SELECT 1 FROM ${DB_NAME}.hosts LIMIT 1;" >/dev/null 2>&1; then
+# ISS-07/ISS-09 fix (md/04): classify the database as empty / complete / partial
+# before deciding what to do — never silently import over or continue past a
+# half-built DB (that ambiguity is exactly how ISS-26 happened).
+TABLE_COUNT=$(mysql -uroot -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}';" 2>/dev/null)
+TABLE_COUNT=${TABLE_COUNT:-0}
+
+DB_STATE="empty"
+if [ "$TABLE_COUNT" -gt 0 ]; then
+    if mysql -uroot -e "SELECT 1 FROM ${DB_NAME}.dbversion LIMIT 1;" >/dev/null 2>&1 && \
+       mysql -uroot -e "SELECT 1 FROM ${DB_NAME}.hosts LIMIT 1;" >/dev/null 2>&1 && \
+       mysql -uroot -e "SELECT 1 FROM ${DB_NAME}.users LIMIT 1;" >/dev/null 2>&1 && \
+       mysql -uroot -e "SELECT 1 FROM ${DB_NAME}.role LIMIT 1;" >/dev/null 2>&1; then
+        DB_STATE="complete"
+    else
+        DB_STATE="partial"
+    fi
+fi
+echo "  Database state: ${DB_STATE} (${TABLE_COUNT} tables)"
+
+if [ "$DB_STATE" != "empty" ]; then
+    # Mirrors upgrade.sh's step [2/6] backup — back up before anything further
+    # touches an already-populated database, whether complete or partial.
     BACKUP_FILE="/tmp/vizoure-db-backup-$(date +%Y%m%d-%H%M%S).sql.gz"
     echo "  Existing database detected — backing up to ${BACKUP_FILE} before continuing..."
-    mysqldump -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME} | gzip > "$BACKUP_FILE"
+    # '|| true': a failed/partial backup here must not abort the script via
+    # pipefail before the partial-state check below gets to report the real
+    # reason with a clear, specific message.
+    mysqldump -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME} 2>/dev/null | gzip > "$BACKUP_FILE" || true
     echo "  Backup saved to: $BACKUP_FILE"
 fi
 
-echo "  Importing schema..."
-zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | \
-    mysql --default-character-set=utf8mb4 -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME}
+if [ "$DB_STATE" = "partial" ]; then
+    echo "ERROR: Database '${DB_NAME}' exists but is incomplete (${TABLE_COUNT} tables; missing one or more of dbversion/hosts/users/role)."
+    echo "A backup of this partial state was saved to ${BACKUP_FILE} — see README.md Recovery section."
+    echo "Refusing to continue: importing the schema over a partial database is unsafe."
+    echo "Restore the backup or manually drop database '${DB_NAME}', then re-run."
+    exit 1
+fi
+
+if [ "$DB_STATE" = "empty" ]; then
+    echo "  Importing schema..."
+    zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | \
+        mysql --default-character-set=utf8mb4 -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME}
     mysql -uroot -e "SELECT 1 FROM ${DB_NAME}.hosts LIMIT 1;" >/dev/null 2>&1 || { echo "ERROR: Schema import failed"; exit 1; }
+else
+    echo "  Database already complete — skipping schema import, continuing with renames/branding/API steps below."
+fi
 
 echo "  Applying default branding renames to database..."
 mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%' AND status=3;"
@@ -184,10 +216,24 @@ else
     exit 1
 fi
 
+# ISS-08 fix (md/04): try the factory Admin/zabbix login first (fresh install);
+# if that fails (already migrated by a prior run), fall back to the Vizoure
+# admin account instead of giving up — this whole step must always run, never
+# silently skip just because a previous run already disabled the factory
+# account. roleid 3 (Super Admin) means either account can do everything below.
 TOKEN=$(curl -s -X POST "$ZBX_URL" \
     -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
     | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('result',''))" 2>/dev/null)
+
+ADMIN_ALREADY_MIGRATED=false
+if [ -z "$TOKEN" ]; then
+    TOKEN=$(curl -s -X POST "$ZBX_URL" \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"admin","password":"Vizoure@123"},"id":1}' \
+        | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('result',''))" 2>/dev/null)
+    ADMIN_ALREADY_MIGRATED=true
+fi
 
 if [ -n "$TOKEN" ]; then
     curl -s -X POST "$ZBX_URL" \
@@ -204,12 +250,24 @@ if [ -n "$TOKEN" ]; then
         > /dev/null
     echo "  Default group renamed to Vizoure Servers"
 
-    curl -s -X POST "$ZBX_URL" \
+    # ISS-08 fix: user.create isn't idempotent on its own (errors if the admin
+    # account already exists; that error was previously swallowed silently by
+    # '> /dev/null', printing a false "Created" message either way). Check first.
+    ADMIN_EXISTS=$(curl -s -X POST "$ZBX_URL" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $TOKEN" \
-        -d '{"jsonrpc":"2.0","method":"user.create","params":{"username":"admin","passwd":"Vizoure@123","roleid":"3","usrgrps":[{"usrgrpid":"7"}]},"id":10}' \
-        > /dev/null
-    echo "  Created admin/Vizoure@123 account"
+        -d '{"jsonrpc":"2.0","method":"user.get","params":{"output":["userid"],"filter":{"username":["admin"]}},"id":9}' \
+        | python3 -c "import sys,json; r=json.load(sys.stdin); print('yes' if r.get('result') else 'no')" 2>/dev/null)
+    if [ "$ADMIN_EXISTS" = "yes" ]; then
+        echo "  admin account already exists — skipping creation"
+    else
+        curl -s -X POST "$ZBX_URL" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $TOKEN" \
+            -d '{"jsonrpc":"2.0","method":"user.create","params":{"username":"admin","passwd":"Vizoure@123","roleid":"3","usrgrps":[{"usrgrpid":"7"}]},"id":10}' \
+            > /dev/null
+        echo "  Created admin/Vizoure@123 account"
+    fi
 
     curl -s -X POST "$ZBX_URL" \
         -H "Content-Type: application/json" \
@@ -298,25 +356,37 @@ else:
     print("  No widget changes needed")
 PYEOF
 
-    NEWTOKEN=$(curl -s -X POST "$ZBX_URL" \
-        -H "Content-Type: application/json" \
-        -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"admin","password":"Vizoure@123"},"id":11}' \
-        | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('result',''))" 2>/dev/null)
-    if [ -n "$NEWTOKEN" ]; then
+    # ISS-08 fix: only disable the factory Admin account on the run that
+    # actually used it (ADMIN_ALREADY_MIGRATED=false) — a re-run that
+    # authenticated via the Vizoure admin account has nothing further to
+    # disable, and no longer needs a separate re-login ($TOKEN already has
+    # Super Admin privileges regardless of which account it came from).
+    if [ "$ADMIN_ALREADY_MIGRATED" = false ]; then
         DISABLED_PW=$(openssl rand -base64 24)
-        curl -s -X POST "$ZBX_URL" \
+        # ISS-29 fix (md/04): Zabbix's API requires 'current_passwd' when an
+        # account changes its OWN password — without it this call has always
+        # failed silently (the response was discarded to /dev/null and never
+        # checked), meaning the factory Admin/zabbix account was never
+        # actually disabled by any previous run. Now check the response too,
+        # instead of assuming success.
+        UPDATE_RESP=$(curl -s -X POST "$ZBX_URL" \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $NEWTOKEN" \
-            -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.update\",\"params\":{\"userid\":\"1\",\"passwd\":\"$DISABLED_PW\"},\"id\":12}" \
-            > /dev/null
-        # ISS-09 fix (md/04): persist the randomized password instead of
-        # discarding it — root-only file (umask makes it 600 on creation),
-        # never echoed to stdout/stderr/logs.
-        (umask 077; echo "$DISABLED_PW" > /root/.vizoure-original-admin-password)
-        echo "  Old default account disabled (new password saved to /root/.vizoure-original-admin-password, root-only)"
+            -H "Authorization: Bearer $TOKEN" \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.update\",\"params\":{\"userid\":\"1\",\"current_passwd\":\"zabbix\",\"passwd\":\"$DISABLED_PW\"},\"id\":12}")
+        if echo "$UPDATE_RESP" | grep -q '"result"'; then
+            # ISS-09 fix (md/04): persist the randomized password instead of
+            # discarding it — root-only file (umask makes it 600 on creation),
+            # never echoed to stdout/stderr/logs.
+            (umask 077; echo "$DISABLED_PW" > /root/.vizoure-original-admin-password)
+            echo "  Old default account disabled (new password saved to /root/.vizoure-original-admin-password, root-only)"
+        else
+            echo "  WARNING: failed to disable the factory Admin account — API response: $UPDATE_RESP"
+        fi
+    else
+        echo "  Factory Admin account already migrated — skipping re-disable"
     fi
 else
-    echo "  WARNING: Could not login — change Admin password manually"
+    echo "  WARNING: Could not log in as Admin/zabbix or admin/Vizoure@123 — skipping API configuration steps. Log in manually and check README.md Recovery section."
 fi
 
 echo ""
