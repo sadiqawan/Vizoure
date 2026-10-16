@@ -28,6 +28,18 @@ class UpdatesUpload extends UpdatesBase {
 		$limit_mb = self::MAX_UPLOAD / 1048576;
 
 		try {
+			// 0) GitHub's automatic "Source code" archive is the most common wrong pick: say so exactly.
+			$picked_name = basename((string) ($_FILES['package']['name'] ?? ''));
+
+			if (preg_match('/^Vizoure-(\d+\.\d+\.\d+-vz\d+)\.(zip|tar\.gz)$/i', $picked_name, $m)) {
+				$this->jsonRejected(
+					_s('"%1$s" is the "Source code" archive that GitHub adds to every release automatically. It is not the release package.', $picked_name),
+					_s('Download vizoure-nms-v%1$s-install.tar.gz (plus SHA256SUMS and SHA256SUMS.sig) from the Assets list of the release.', $m[1])
+				);
+
+				return;
+			}
+
 			// 1) Check every file first and report ALL problems at once, naming the file and the expected name.
 			$problems = [];
 
@@ -55,6 +67,31 @@ class UpdatesUpload extends UpdatesBase {
 
 			if ($problems) {
 				throw new \RuntimeException(implode(' ', $problems));
+			}
+
+			// 1b) Early, friendly rejection (nothing is queued): wrong channel or not newer than what is installed.
+			$state = $this->state();
+			$channel = $state['channel'] ?? 'stable';
+			$installed = $state['installed'] ?? null;
+			$meta = $this->readPackageMeta($_FILES['package']['tmp_name']);
+
+			if (is_array($meta)) {
+				if (($meta['channel'] ?? '') === 'test' && $channel !== 'test') {
+					$this->jsonRejected(_('This is a test release.'), _('To install it, set Update channel to Test and save.'));
+
+					return;
+				}
+
+				$new = $this->versionTuple((string) ($meta['version'] ?? ''));
+				$cur = $this->versionTuple($installed);
+
+				if ($new !== null && $cur !== null && $new <= $cur) {
+					$this->jsonRejected(_s('This release (%1$s) is not newer than the version installed (%2$s).',
+						$meta['version'], $installed), _('Choose a newer release.')
+					);
+
+					return;
+				}
 			}
 
 			// 2) Stage them (private to the updater) and hand the request over.

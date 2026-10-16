@@ -278,5 +278,45 @@ class Redaction(unittest.TestCase):
         self.assertEqual(vzu.redact_line('[3/6] Stopping services...'), '[3/6] Stopping services...')
 
 
+class Rejections(unittest.TestCase):
+    """Refusals before anything changes must carry a plain-words reason and a fix (shown to the admin)."""
+
+    def test_signature_rejection_has_fix(self):
+        d = tempfile.mkdtemp(prefix='rej-', dir=SCRATCH)
+        sums = os.path.join(d, 'SHA256SUMS')
+        open(sums, 'w').write('abc  file\n')
+        open(sums + '.sig', 'w').write('garbage')
+        with self.assertRaises(vzu.Rejected) as cm:
+            vzu.verify_signature(sums, sums + '.sig')
+        self.assertTrue(cm.exception.reason and cm.exception.fix)
+        self.assertNotIn('zabbix', (cm.exception.reason + cm.exception.fix).lower())
+
+    def test_checksum_rejection_has_fix(self):
+        d = tempfile.mkdtemp(prefix='rej-', dir=SCRATCH)
+        tb = os.path.join(d, 'p.tar.gz')
+        open(tb, 'wb').write(b'x')
+        sums = os.path.join(d, 'S')
+        open(sums, 'w').write('%s  vizoure-nms-v1.0.0-vz1-install.tar.gz\n' % ('0' * 64))
+        with self.assertRaises(vzu.Rejected) as cm:
+            vzu.check_checksum(sums, 'vizoure-nms-v1.0.0-vz1-install.tar.gz', tb)
+        self.assertIn('Download the package again', cm.exception.fix)
+
+    def test_recovery_text_uses_vizoure_cli_and_no_upstream_name(self):
+        text = ' '.join(vzu.recovery_steps({'backup_file': '/var/backups/vizoure/x.sql.gz'}))
+        self.assertIn('sudo vizoure start', text)
+        self.assertNotIn('zabbix', text.lower())
+
+    def test_customer_log_hides_upstream_name(self):
+        os.makedirs(vzu.STATE_DIR, exist_ok=True)
+        run = vzu.Run({'id': rid(), 'user': 'admin', 'userid': '1', 'version': 'v9.9.9-vz1'}, 'upload')
+        run.say('Setting up zabbix-server-mysql (1:7.4.15) ...')
+        run.logf.close()
+        run.rawf.close()
+        shown = open(os.path.join(run.dir, 'log.txt')).read()
+        raw = open(os.path.join(run.dir, 'log.raw.txt')).read()
+        self.assertNotIn('zabbix', shown.lower())
+        self.assertIn('zabbix', raw)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

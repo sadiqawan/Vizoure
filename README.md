@@ -168,7 +168,7 @@ Sign in as a **Super admin** and open **Administration -> Vizoure updates**. A s
 update is available. The page shows the installed version, the newer releases with their release notes, and an
 **Upgrade to vX** button. The confirmation dialog explains what happens (database backup, service restart, a few minutes of
 downtime); then you see live progress and the result. The page reconnects by itself while the web server restarts. Every
-upgrade is recorded in the upgrade history (who, when, from/to, result, backup file) and in the Zabbix audit log.
+upgrade is recorded in the upgrade history (who, when, from/to, result, backup file) and in the audit log (Administration -> Audit log).
 
 - **Channels:** *Stable* (default) shows normal releases only. *Test* also shows pre-releases; use it only on test systems.
 - **Check now** refreshes the list immediately (it is also checked every 6 hours). A proxy can be set on the same page.

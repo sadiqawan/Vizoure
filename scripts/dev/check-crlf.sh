@@ -25,7 +25,7 @@ CHECKED=0
 check_file() {
     local f="$1"
     case "$f" in
-        *.sh|*.php|*.css|*.js|*.conf|*.py|*.json|*.service|*.path|*.timer|MANIFEST|VERSION|allowed_signers) ;;
+        *.sh|*.php|*.css|*.js|*.conf|*.py|*.json|*/cli/vizoure|*.service|*.path|*.timer|MANIFEST|VERSION|allowed_signers) ;;
         *) return 0 ;;
     esac
     # Skip vendored/local-only trees even if somehow passed explicitly.

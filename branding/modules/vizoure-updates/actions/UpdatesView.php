@@ -58,6 +58,7 @@ class UpdatesView extends UpdatesBase {
 
 		if ($latest !== null && ($latest['state'] ?? '') === 'failed' && (time() - (int) ($latest['ended'] ?? 0)) < 14 * 86400) {
 			$last_failed = $latest;
+			$last_failed['log'] = $this->logTail((string) $latest['id'], 200);
 		}
 
 		// Module actions are CSRF-checked against the full action name.

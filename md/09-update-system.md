@@ -74,7 +74,7 @@ network. Even "Check now" is just a request file that the root service picks up.
   The tarball contains the top directory `vizoure-nms-<tag>/` with `scripts/`, `branding/` (header, updater,
   module, MANIFEST, VERSION), `CHANGELOG.md` and **`release.json`**:
   ```json
-  {"version":"v7.4.15-vz2","zabbix_version":"7.4.15","type":"full","channel":"stable","released":"2026-10-16T10:28:36Z"}
+  {"version":"v7.4.15-vz2","core_version":"7.4.15","type":"full","channel":"stable","released":"2026-10-16T10:28:36Z"}
   ```
 - **Release notes** shown in the UI are the GitHub release body, which `create-release.sh` builds from the
   `## <tag>` section of `CHANGELOG.md`.
@@ -100,7 +100,7 @@ assets → verifies → extracts → runs the package's own `scripts/upgrade.sh 
 network needed (≤ 2 MB per file).
 
 **Mode:** the *updater* decides. `--branding-only` (no Zabbix package/DB steps, only Apache restarted) is used only when the
-signed `release.json` says `type: branding-only` **and** its `zabbix_version` equals the installed Zabbix; otherwise
+signed `release.json` says `type: branding-only` **and** its `core_version` equals the installed core (Zabbix) version; otherwise
 the full upgrade runs.
 
 **Backups:** `upgrade.sh` checks free space first (estimated dump size + 512 MB) and aborts cleanly with nothing changed,
@@ -136,3 +136,28 @@ already contain it.
 
 Direct SQL registers the module (ISS-37); audit goes through a module-config write (ISS-38); the log viewer hides any line containing
 a credential word; the update page needs JavaScript; release notes are shown as plain text.
+
+## 10. Release publication plan (the Releases page)
+
+- Today the repository's **Latest** release is the legacy `v7.4.9` (no signed assets, not part of the update system; the updater
+  ignores tags that do not match `vX.Y.Z-vzN`).
+- **After this feature is merged:** publish `v7.4.15-vz2` (the first updater-capable release) as a signed **stable** release
+  (`create-release.sh` without `PRERELEASE`), verify it on a clean VM through the UI, then mark it **Latest** (GitHub: Edit release ->
+  "Set as the latest release").
+- Mark `v7.4.9` as **legacy**: edit its notes to start with "Legacy release. It cannot be updated from the web UI. Use v7.4.15-vz2 or
+  newer." (do not delete it: existing installs and links may refer to it). Do this only when `v7.4.15-vz2` is published.
+- Test pre-releases (`PRERELEASE=1`) are never marked Latest and are deleted, with their tag, after testing.
+- GitHub always attaches **Source code (zip/tar.gz)** to a release and this cannot be disabled. The release notes therefore start with a
+  box telling customers to download only the 3 files (package, `SHA256SUMS`, `SHA256SUMS.sig`); the upload page recognises a
+  source archive and says so; `.gitattributes` `export-ignore` keeps those archives free of `md/`, `scripts/dev/`, `packer/`.
+
+## 11. Rejected versus failed
+
+- **Rejected** (validation refused the request before anything on the server changed: wrong channel, not newer, bad signature,
+  checksum mismatch, not a release package, download problem, or `upgrade.sh` refusing to start because the backup cannot be made):
+  state `rejected`, shown as "Upload rejected - nothing was changed on the server" with the reason in plain words and how to fix it.
+  No recovery steps, no log, no failure box. The PHP side already answers wrong-channel / not-newer / "Source code" archive before
+  anything is queued, and the browser warns right after files are selected.
+- **Failed / interrupted** (after `upgrade.sh` started): state `failed`/`interrupted`, recovery steps and the log are shown; the backup is kept.
+- The page shows customers no upstream product name: the log is rewritten (`zabbix` -> `vizoure`), the unfiltered output is
+  kept root-only in `run/<id>/log.raw.txt`, recovery uses `sudo vizoure start|stop|status`, and `release.json` uses the neutral key `core_version`.

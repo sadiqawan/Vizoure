@@ -20,3 +20,16 @@
 *.ova binary
 *.ovf binary
 *.vmx binary
+
+# GitHub's automatic "Source code (zip / tar.gz)" release archives are made with `git archive`, which honours
+# export-ignore. Keep them small and free of developer-only material (they are not installable anyway):
+#   md/           internal engineering notes and test procedures
+#   scripts/dev/  developer checks and unit tests (never shipped)
+#   packer/       image-build configuration (build-host settings and a UI bundle), not for customers
+#   CLAUDE.md, .claude/  assistant configuration
+# Applies to tags created after this change. The signed release package is built separately (make-release-assets.sh).
+md/ export-ignore
+scripts/dev/ export-ignore
+packer/ export-ignore
+CLAUDE.md export-ignore
+.claude/ export-ignore

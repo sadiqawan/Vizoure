@@ -10,6 +10,7 @@ logos/login-bg.png
 logos/logo.png
 header/top-header.css
 header/top-header.js
+cli/vizoure
 updater/vizoure-updater.py
 updater/updater.conf
 updater/allowed_signers

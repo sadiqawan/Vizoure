@@ -86,7 +86,11 @@ if ($data['last_failed'] !== null) {
 		(new CTag('details', true, [
 			(new CTag('summary', true, _('Recovery steps')))->addClass(ZBX_STYLE_LINK_ACTION),
 			$steps
-		]))->addClass('vz-upd-recovery')
+		]))->addClass('vz-upd-recovery')->setAttribute('open', 'open'),
+		$f['log'] ? (new CTag('details', true, [
+			(new CTag('summary', true, _('Upgrade log')))->addClass(ZBX_STYLE_LINK_ACTION),
+			(new CTag('pre', true, implode("\n", $f['log'])))->addClass('vz-upd-log')
+		]))->addClass('vz-upd-recovery')->setAttribute('open', 'open') : null
 	]))->addClass('vz-upd-card');
 }
 
@@ -183,14 +187,17 @@ $history_table = (new CTableInfo())
 	->setHeader([_('When'), _('User'), _('From'), _('To'), _('Source'), _('Mode'), _('Result'), _('Backup')])
 	->setNoDataMessage(_('No upgrades yet'));
 
-$result_labels = ['success' => _('success'), 'failed' => _('failed'), 'interrupted' => _('interrupted')];
+$result_labels = ['success' => _('success'), 'failed' => _('failed'), 'interrupted' => _('interrupted'),
+	'rejected' => _('rejected (nothing changed)')];
 
 foreach ($data['history'] as $h) {
 	$result = $result_labels[$h['result'] ?? ''] ?? (string) ($h['result'] ?? '');
-	$result_cell = [(new CSpan($result))->addClass(($h['result'] ?? '') === 'success' ? ZBX_STYLE_GREEN : ZBX_STYLE_RED)];
+	$result_class = ['success' => ZBX_STYLE_GREEN, 'rejected' => ZBX_STYLE_ORANGE][$h['result'] ?? ''] ?? ZBX_STYLE_RED;
+	$result_cell = [(new CSpan($result))->addClass($result_class)];
 
 	if (!empty($h['error'])) {
-		$result_cell[] = (new CDiv((string) $h['error']))->addClass('vz-upd-note vz-upd-small');
+		$result_cell[] = (new CDiv(trim((string) $h['error'].' '.(string) ($h['fix'] ?? ''))))
+			->addClass('vz-upd-note vz-upd-small');
 	}
 
 	$history_table->addRow([
@@ -225,5 +232,6 @@ $this->includeJsFile('updates.view.js.php', [
 	'run' => $data['run'],
 	'run_active' => $data['run_active'],
 	'installed' => $installed,
+	'channel' => $data['channel'],
 	'max_upload' => $data['max_upload']
 ]);

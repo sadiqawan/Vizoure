@@ -109,10 +109,13 @@ NOTES="$(awk -v t="## ${TAG}" '$0==t{f=1;next} /^## /{f=0} f' "${BUILD_DIR}/CHAN
 
 RELEASE_BODY="# Vizoure NMS ${TAG}
 
+> **Offline upgrade: download only these 3 files** from the Assets list below:
+> \`vizoure-nms-${TAG}-install.tar.gz\`, \`SHA256SUMS\` and \`SHA256SUMS.sig\`.
+> Ignore **Source code (zip)** and **Source code (tar.gz)**: GitHub adds them to every release automatically; they cannot be installed.
+
 ${NOTES}
 
-Vizoure NMS is a rebranded network monitoring system based on Zabbix ${VERSION}.
-Channel: **${CHANNEL}**.
+Vizoure NMS ${VERSION}. Channel: **${CHANNEL}**.
 
 ## Quick Install
 

@@ -59,7 +59,8 @@ abstract class UpdatesBase extends CController {
 			foreach (array_reverse(explode("\n", trim($raw))) as $line) {
 				$row = json_decode($line, true);
 
-				if (is_array($row) && ($row['result'] ?? '') !== 'rejected' && ($row['result'] ?? '') !== 'config') {
+				// runs only (they have an id); malformed-request bookkeeping and settings changes are not history
+				if (is_array($row) && isset($row['id']) && ($row['result'] ?? '') !== 'config') {
 					$rows[] = $row;
 				}
 
@@ -108,6 +109,55 @@ abstract class UpdatesBase extends CController {
 		}
 
 		return array_slice(explode("\n", rtrim($raw)), -$lines);
+	}
+
+	/**
+	 * Read <top>/release.json out of an uploaded package WITHOUT extracting it (pure PHP, no commands). Used only for
+	 * an early, friendly "this will be rejected" answer; the root updater verifies signature and checksum and decides.
+	 */
+	protected function readPackageMeta(string $path): ?array {
+		$gz = @gzopen($path, 'rb');
+
+		if ($gz === false) {
+			return null;
+		}
+
+		$meta = null;
+		$read = 0;
+
+		while (!gzeof($gz) && $read < 24 * 1048576) {
+			$header = gzread($gz, 512);
+
+			if ($header === false || strlen($header) < 512 || trim($header, "\0") === '') {
+				break;
+			}
+
+			$read += 512;
+			$name = rtrim(substr($header, 0, 100), "\0");
+			$size = (int) octdec(trim(substr($header, 124, 12), " \0"));
+			$padded = (int) (ceil($size / 512) * 512);
+
+			if (preg_match('#^vizoure-nms-v\d+\.\d+\.\d+-vz\d+/release\.json$#', $name) && $size > 0 && $size < 4096) {
+				$data = json_decode((string) gzread($gz, $size), true);
+				$meta = is_array($data) ? $data : null;
+				break;
+			}
+
+			for ($left = $padded; $left > 0; $left -= 65536) {
+				gzread($gz, min($left, 65536));
+			}
+
+			$read += $padded;
+		}
+
+		gzclose($gz);
+
+		return $meta;
+	}
+
+	protected function jsonRejected(string $reason, string $fix): void {
+		$this->audit('rejected', ['reason' => $reason]);
+		$this->json(['ok' => false, 'rejected' => true, 'error' => $reason, 'fix' => $fix]);
 	}
 
 	/* ---------- writes (request spool) ---------- */

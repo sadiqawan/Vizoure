@@ -686,11 +686,11 @@ else
     VZ_MANIFEST="$VZ_STAGE/MANIFEST"
 fi
 while IFS= read -r VZ_F; do
-    case "$VZ_F" in updater/*|modules/*) ;; *) continue ;; esac
+    case "$VZ_F" in updater/*|modules/*|cli/*) ;; *) continue ;; esac
     mkdir -p "$VZ_STAGE/$(dirname "$VZ_F")"
     fetch_local_or_github "$BRANDING_LOCAL_DIR/$VZ_F" "branding/$VZ_F" "$VZ_STAGE/$VZ_F"
 done < "$VZ_MANIFEST"
-for VZ_NEED in updater/vizoure-updater.py updater/allowed_signers modules/vizoure-updates/manifest.json \
+for VZ_NEED in updater/vizoure-updater.py updater/allowed_signers cli/vizoure modules/vizoure-updates/manifest.json \
         modules/vizoure-updates/Module.php modules/vizoure-updates/actions/UpdatesBase.php; do
     [ -s "$VZ_STAGE/$VZ_NEED" ] || [ "$VZ_NEED" = "updater/allowed_signers" ] || {
         echo "ERROR: $VZ_NEED missing from branding/ (incomplete release package); updates module not installed"
@@ -717,6 +717,10 @@ else
     mysql -uroot -e "UPDATE ${VZ_DB}.module SET relative_path='modules/vizoure-updates', status=1 WHERE id='vizoure.updates'"
     echo "  module already registered (moduleid ${VZ_MODID}) - ensured enabled"
 fi
+
+# --- `vizoure` service-control command (start|stop|restart|status|logs|version) ---
+install -m 0755 "$VZ_STAGE/cli/vizoure" /usr/local/sbin/.vizoure.new
+mv -f /usr/local/sbin/.vizoure.new /usr/local/sbin/vizoure
 
 # --- root updater service ---
 install -d -m 0755 /usr/local/lib/vizoure-updater /etc/vizoure /var/lib/vizoure-updater /var/lib/vizoure-updater/run \

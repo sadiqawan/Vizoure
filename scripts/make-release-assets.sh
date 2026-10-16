@@ -70,7 +70,7 @@ rm -rf "$STAGE/$TOP/scripts/dev"
 cat > "$STAGE/$TOP/release.json" <<EOF
 {
   "version": "$VERSION",
-  "zabbix_version": "$ZBX_VERSION",
+  "core_version": "$ZBX_VERSION",
   "type": "$TYPE",
   "channel": "$CHANNEL",
   "released": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

@@ -9,6 +9,7 @@ $js_data = json_encode([
 	'run' => $data['run'],
 	'run_active' => $data['run_active'],
 	'installed' => $data['installed'],
+	'channel' => $data['channel'],
 	'max_upload' => $data['max_upload'],
 	'url' => 'vizoure.php',
 	'text' => [
@@ -22,6 +23,8 @@ $js_data = json_encode([
 		'restarting' => _('The server is restarting. This is expected during an upgrade; reconnecting...'),
 		'success' => _('Upgrade completed successfully.'),
 		'failed' => _('The upgrade did not complete.'),
+		'rejected_upload' => _('Upload rejected - nothing was changed on the server.'),
+		'rejected_start' => _('Upgrade not started - nothing was changed on the server.'),
 		'backup_kept' => _('Your database backup was kept:'),
 		'recovery' => _('Recovery steps'),
 		'reload' => _('Reload page'),
@@ -38,7 +41,7 @@ $js_data = json_encode([
 	'use strict';
 
 	const D = <?= $js_data ?>;
-	const TERMINAL = ['done', 'failed'];
+	const TERMINAL = ['done', 'failed', 'rejected'];
 	const $ = (id) => document.getElementById(id);
 
 	function post(action, fields, formData) {
@@ -95,6 +98,20 @@ $js_data = json_encode([
 		b.style.display = text ? 'block' : 'none';
 	}
 
+	function rejectedBanner(title, reason, fix) {
+		const b = $('vz-run-banner');
+		b.className = 'vz-upd-banner vz-upd-warn';
+		b.textContent = '';
+		b.appendChild(el('strong', title));
+		b.appendChild(el('div', reason || ''));
+
+		if (fix) {
+			b.appendChild(el('div', fix, 'vz-upd-fix'));
+		}
+
+		b.style.display = 'block';
+	}
+
 	function percent(run) {
 		const map = {queued: 4, validating: 10, downloading: 25, verifying: 40, extracting: 50, upgrading: 55, done: 100, failed: 100};
 		let p = map[run.state] || 0;
@@ -115,6 +132,17 @@ $js_data = json_encode([
 		const bar = $('vz-run-bar');
 		bar.style.width = percent(run) + '%';
 		bar.className = 'vz-upd-bar-fill' + (run.state === 'failed' ? ' vz-upd-bar-failed' : (run.state === 'done' ? ' vz-upd-bar-done' : ''));
+
+		if (run.state === 'rejected') {
+			// refused before anything changed: not a failure, no progress bar, no recovery steps, no log
+			$('vz-run-bar').parentNode.style.display = 'none';
+			$('vz-run-log').style.display = 'none';
+			$('vz-run-recovery').textContent = '';
+			rejectedBanner(run.source === 'upload' ? D.text.rejected_upload : D.text.rejected_start, run.error, run.fix);
+			return;
+		}
+
+		$('vz-run-bar').parentNode.style.display = '';
 
 		const pre = $('vz-run-log');
 		const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
@@ -321,6 +349,12 @@ $js_data = json_encode([
 			return '"' + n + '" is not the release signature. The signature must be named exactly SHA256SUMS.sig.';
 		}
 
+		const src = /^Vizoure-(\d+\.\d+\.\d+-vz\d+)\.(zip|tar\.gz)$/i.exec(n);
+
+		if (src) {
+			return '"' + n + '" is the "Source code" archive that GitHub adds to every release automatically. It is not the release package. Download vizoure-nms-v' + src[1] + '-install.tar.gz from the Assets list of the release.';
+		}
+
 		if (/\.(tar\.gz|tgz|zip|tar|gz)$/i.test(n)) {
 			return '"' + n + '" is not a Vizoure release package. Expected vizoure-nms-<version>-install.tar.gz from the release assets (not the "Source code" archive).';
 		}
@@ -346,6 +380,78 @@ $js_data = json_encode([
 		$('vz-upload').disabled = polling || !uploadReady();
 	}
 
+	function tuple(tag) {
+		const m = /^v?(\d+)\.(\d+)\.(\d+)-vz(\d+)$/.exec(tag || '');
+		return m ? m.slice(1).map(Number) : null;
+	}
+
+	function newer(a, b) {
+		for (let i = 0; i < 4; i++) {
+			if (a[i] !== b[i]) {
+				return a[i] > b[i];
+			}
+		}
+
+		return false;
+	}
+
+	/** Read <top>/release.json from the .tar.gz in the browser (gunzip + tar walk); null if unsupported/unreadable. */
+	async function readMeta(file) {
+		if (typeof DecompressionStream === 'undefined') {
+			return null;
+		}
+
+		try {
+			const stream = file.stream().pipeThrough(new DecompressionStream('gzip'));
+			const buf = new Uint8Array(await new Response(stream).arrayBuffer());
+			const dec = new TextDecoder();
+			let off = 0;
+
+			while (off + 512 <= buf.length && off < 24 * 1048576) {
+				const name = dec.decode(buf.subarray(off, off + 100)).replace(/\0.*$/, '');
+
+				if (name === '') {
+					break;
+				}
+
+				const size = parseInt(dec.decode(buf.subarray(off + 124, off + 136)).replace(/\0.*$/, '').trim() || '0', 8);
+
+				if (/^vizoure-nms-v\d+\.\d+\.\d+-vz\d+\/release\.json$/.test(name) && size > 0 && size < 4096) {
+					return JSON.parse(dec.decode(buf.subarray(off + 512, off + 512 + size)));
+				}
+
+				off += 512 + Math.ceil(size / 512) * 512;
+			}
+		}
+		catch (e) {
+			return null;
+		}
+
+		return null;
+	}
+
+	/** Early warnings that block the upload button when the server would refuse the package anyway. */
+	async function preflight() {
+		const warns = [];
+
+		if (picked.package) {
+			const fromName = /^vizoure-nms-(v\d+\.\d+\.\d+-vz\d+)-install\.tar\.gz$/.exec(picked.package.name);
+			const cur = tuple(D.installed);
+			const meta = await readMeta(picked.package);
+			const ver = meta && meta.version ? meta.version : (fromName ? fromName[1] : null);
+
+			if (ver && cur && tuple(ver) && !newer(tuple(ver), cur)) {
+				warns.push('This release (' + ver + ') is not newer than the version installed (' + D.installed + '). Choose a newer release.');
+			}
+
+			if (meta && meta.channel === 'test' && D.channel !== 'test') {
+				warns.push('This is a test release. To install it, set Update channel to Test and save.');
+			}
+		}
+
+		return warns;
+	}
+
 	function takeFiles(fileList) {
 		const problems = [];
 		picked = {package: null, sums: null, sig: null};
@@ -368,6 +474,14 @@ $js_data = json_encode([
 		});
 
 		renderPicked(problems);
+
+		preflight().then((warns) => {
+			if (warns.length) {
+				const box = $('vz-file-problems');
+				warns.forEach((w) => box.appendChild(el('div', '\u26A0 ' + w, 'vz-upd-problem')));
+				$('vz-upload').disabled = true;
+			}
+		});
 	}
 
 	const fileInput = $('vz-files');
@@ -402,8 +516,17 @@ $js_data = json_encode([
 
 		post('upload', null, fd).then((res) => {
 			if (!res.ok) {
-				banner('err', res.error || D.text.error_generic);
 				$('vz-run-step').textContent = '';
+				$('vz-run-bar').parentNode.style.display = 'none';
+				$('vz-run-log').style.display = 'none';
+
+				if (res.rejected) {
+					rejectedBanner(D.text.rejected_upload, res.error, res.fix);
+				}
+				else {
+					banner('err', res.error || D.text.error_generic);
+				}
+
 				return;
 			}
 

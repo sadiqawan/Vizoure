@@ -84,6 +84,15 @@ REDACT_RE = re.compile(r'pass(word|wd)?|secret|token', re.I)
 # small helpers
 # ----------------------------------------------------------------------------------------------
 
+class Rejected(ValueError):
+    """The request was refused BEFORE anything on the server was changed (plain words + how to fix it)."""
+
+    def __init__(self, reason, fix=''):
+        super().__init__(reason)
+        self.reason = reason
+        self.fix = fix
+
+
 def log(msg):
     print('vizoure-updater: ' + str(msg), flush=True)
 
@@ -320,13 +329,15 @@ def download(url, dest, max_size, conf):
 def verify_signature(sums_path, sig_path):
     """SHA256SUMS must carry a valid ssh-keygen -Y signature from an allowed signer. No override."""
     if not os.path.isfile(SIGNERS_FILE):
-        raise ValueError('no allowed_signers file installed; cannot verify release')
+        raise Rejected('This server has no list of trusted release signers, so no release can be verified.',
+                       'Re-run the command-line upgrade once (see the README), which installs it.')
     with open(sums_path, 'rb') as sums:
         r = subprocess.run(['ssh-keygen', '-Y', 'verify', '-f', SIGNERS_FILE, '-I', SIGN_PRINCIPAL,
                             '-n', SIGN_NAMESPACE, '-s', sig_path],
                            stdin=sums, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
     if r.returncode != 0:
-        raise ValueError('release signature is missing or invalid; release rejected')
+        raise Rejected('The release signature is missing or invalid. Only releases signed by Vizoure can be installed.',
+                       'Download SHA256SUMS and SHA256SUMS.sig again from the Vizoure releases page and do not edit them.')
 
 
 def sha256_file(path):
@@ -345,9 +356,11 @@ def check_checksum(sums_path, name, tarball_path):
             if m and m.group(2) == name:
                 want = m.group(1)
     if want is None:
-        raise ValueError('%s is not listed in the signed SHA256SUMS' % name)
+        raise Rejected('The checksum list does not contain %s.' % name,
+                       'Use the SHA256SUMS file from the same release as the package.')
     if sha256_file(tarball_path) != want:
-        raise ValueError('checksum mismatch for %s; package rejected' % name)
+        raise Rejected('The package does not match its checksum: it was changed or the download is damaged.',
+                       'Download the package again from the Vizoure releases page.')
 
 
 def safe_extract(tarball, dest, top):
@@ -357,17 +370,22 @@ def safe_extract(tarball, dest, top):
     with tarfile.open(tarball, 'r:gz') as tf:
         for m in tf:
             if len(members) >= MAX_EXTRACT_MEMBERS:
-                raise ValueError('package has too many entries')
+                raise Rejected('The package is not a valid Vizoure release (too many entries).',
+                           'Download vizoure-nms-<version>-install.tar.gz from the Assets list of the release (not the Source code archive).')
             name = m.name
             if name.startswith('/') or '..' in name.split('/') or '\\' in name:
-                raise ValueError('unsafe path in package: %r' % name)
+                raise Rejected('The package is not a valid Vizoure release (unsafe file path).',
+                           'Download vizoure-nms-<version>-install.tar.gz from the Assets list of the release (not the Source code archive).')
             if not (name == top or name.startswith(top + '/')):
-                raise ValueError('unexpected entry outside %s/: %r' % (top, name))
+                raise Rejected('The package is not a valid Vizoure release (unexpected content).',
+                           'Download vizoure-nms-<version>-install.tar.gz from the Assets list of the release (not the Source code archive).')
             if not (m.isreg() or m.isdir()):
-                raise ValueError('links/devices are not allowed in a package: %r' % name)
+                raise Rejected('The package is not a valid Vizoure release (it contains links or special files).',
+                           'Download vizoure-nms-<version>-install.tar.gz from the Assets list of the release (not the Source code archive).')
             total += max(m.size, 0)
             if total > MAX_EXTRACT_TOTAL:
-                raise ValueError('package is too large when extracted')
+                raise Rejected('The package is too large to be a Vizoure release.',
+                           'Download vizoure-nms-<version>-install.tar.gz from the Assets list of the release (not the Source code archive).')
             members.append(m)
         os.makedirs(dest, mode=0o700, exist_ok=True)
         tf.extractall(dest, members=members, filter='data')
@@ -490,10 +508,13 @@ class Run:
         os.makedirs(self.dir, mode=0o755, exist_ok=True)
         self.logf = open(os.path.join(self.dir, 'log.txt'), 'a')
         os.chmod(os.path.join(self.dir, 'log.txt'), 0o644)
+        # the unfiltered output (package names etc.) stays root-only for administrators
+        fd = os.open(os.path.join(self.dir, 'log.raw.txt'), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        self.rawf = os.fdopen(fd, 'a')
         self.status = {'id': self.id, 'state': 'queued', 'step': 'Queued', 'source': source,
                        'user': req['user'], 'userid': req['userid'], 'to': req.get('version'),
                        'from': installed_version(), 'started': now(), 'ended': None, 'heartbeat': now(),
-                       'mode': None, 'backup_file': None, 'error': None, 'recovery': None}
+                       'mode': None, 'backup_file': None, 'error': None, 'fix': None, 'recovery': None}
         self._stop = threading.Event()
         self.save()
 
@@ -502,7 +523,11 @@ class Run:
         write_atomic(os.path.join(self.dir, 'status.json'), json.dumps(self.status, indent=1))
 
     def say(self, line):
-        self.logf.write(redact_line(line.rstrip('\n')) + '\n')
+        line = line.rstrip('\n')
+        self.rawf.write(line + '\n')
+        self.rawf.flush()
+        # customer-visible log: no upstream product names, no credential-looking lines
+        self.logf.write(re.sub(r'(?i)zabbix', 'vizoure', redact_line(line)) + '\n')
         self.logf.flush()
 
     def set(self, state, step):
@@ -515,6 +540,26 @@ class Run:
         while not self._stop.wait(HEARTBEAT_EVERY):
             self.save()
 
+    def reject(self, reason, fix):
+        """Refused before anything was changed: not a failure, no recovery steps."""
+        self._stop.set()
+        self.status['state'] = 'rejected'
+        self.status['step'] = 'Upload rejected - nothing was changed on the server' \
+            if self.status['source'] == 'upload' else 'Upgrade not started - nothing was changed on the server'
+        self.status['ended'] = now()
+        self.status['error'] = reason
+        self.status['fix'] = fix
+        self.status['recovery'] = None
+        self.say('REJECTED: %s %s' % (reason, fix))
+        self.save()
+        self.logf.close()
+        self.rawf.close()
+        entry = {k: self.status.get(k) for k in ('id', 'user', 'userid', 'from', 'to', 'mode', 'source', 'started',
+                                                'ended')}
+        entry.update({'result': 'rejected', 'error': reason, 'fix': fix, 'backup_file': None})
+        append_history(entry)
+        save_state(load_state())
+
     def finish(self, ok, error=None):
         self._stop.set()
         self.status['state'] = 'done' if ok else 'failed'
@@ -526,6 +571,7 @@ class Run:
         self.say(('SUCCESS' if ok else 'FAILED: %s' % error))
         self.save()
         self.logf.close()
+        self.rawf.close()
         entry = {k: self.status.get(k) for k in ('id', 'user', 'userid', 'from', 'to', 'mode', 'source', 'backup_file',
                                                 'started', 'ended')}
         entry['result'] = 'success' if ok else 'failed'
@@ -536,19 +582,19 @@ class Run:
 
 
 def recovery_steps(status):
-    steps = ['Open the log above to see where the upgrade stopped.']
+    steps = ['Check the log on this page to see where the upgrade stopped.']
     if status.get('backup_file'):
         steps.append('Your database backup was kept: %s' % status['backup_file'])
-        steps.append('To restore it: sudo systemctl stop zabbix-server && zcat %s | sudo mysql vizoure && '
-                     'sudo systemctl start zabbix-server' % status['backup_file'])
-    steps.append('If monitoring or the web server are stopped, start them: sudo systemctl start zabbix-server zabbix-agent apache2')
+        steps.append('To restore it: sudo vizoure stop server && zcat %s | sudo mysql vizoure && '
+                     'sudo vizoure start server' % status['backup_file'])
+    steps.append('If anything is stopped, start it again: sudo vizoure start   (check with: sudo vizoure status)')
     steps.append('The upgrade can be re-run from this page once the cause is fixed (it is safe to repeat).')
     steps.append('To go back to the previous release, install its package with scripts/upgrade.sh from the previous '
                  'release tarball (see README, Recovery).')
     return steps
 
 
-def installed_zabbix_version():
+def installed_core_version():
     r = subprocess.run(['dpkg-query', '-W', '-f=${Version}', 'zabbix-server-mysql'], stdout=subprocess.PIPE,
                        stderr=subprocess.DEVNULL, timeout=15)
     m = re.search(r'(\d+\.\d+\.\d+)', r.stdout.decode() if r.returncode == 0 else '')
@@ -560,14 +606,17 @@ def run_upgrade(req, source):
     hb = threading.Thread(target=run.heartbeat_loop, daemon=True)
     hb.start()
     work = os.path.join(WORK_DIR, run.id)
+    changed = False  # becomes True only when upgrade.sh is started
     try:
         run.set('validating', 'Validating request')
         inst = installed_version()
         if not inst:
-            raise ValueError('installed version is unknown (/etc/vizoure/version missing)')
+            raise Rejected('The installed version is unknown (/etc/vizoure/version is missing).',
+                           'Re-run the command-line upgrade once (see the README).')
         target = req['version']
         if parse_version(target) <= parse_version(inst):
-            raise ValueError('target %s is not newer than installed %s' % (target, inst))
+            raise Rejected('This release (%s) is not newer than the version installed (%s).' % (target, inst),
+                           'Choose a newer release.')
         conf = load_config()
         os.makedirs(work, mode=0o700, exist_ok=True)
         tarball = os.path.join(work, 'package.tar.gz')
@@ -582,12 +631,17 @@ def run_upgrade(req, source):
                 state = check_releases(force=False)
                 rel = next((r for r in state['releases'] if r['tag'] == target), None)
             if rel is None:
-                raise ValueError('%s is not a published release' % target)
+                raise Rejected('%s is not a published release.' % target, 'Press "Check now" and choose a listed release.')
             if not release_visible(rel, conf['channel']):
-                raise ValueError('%s is a test release and the channel is "stable"' % target)
+                raise Rejected('This is a test release.', 'To install it, set Update channel to Test and save.')
             run.set('downloading', 'Downloading release %s' % target)
             base = 'https://github.com/%s/%s/releases/download/%s/' % (OWNER, REPO, target)
-            download(base + tar_name, tarball, MAX_TARBALL, conf)
+            try:
+                download(base + tar_name, tarball, MAX_TARBALL, conf)
+            except Exception:
+                raise Rejected('The release could not be downloaded from GitHub.',
+                               'Check the server\'s internet connection (or the proxy setting), or upgrade offline '
+                               'with the 3 release files.')
             download(base + 'SHA256SUMS', sums, MAX_SUMS, conf)
             download(base + 'SHA256SUMS.sig', sig, MAX_SIG, conf)
         else:
@@ -609,19 +663,21 @@ def run_upgrade(req, source):
         src_dir = safe_extract(tarball, os.path.join(work, 'src'), top)
         for needed in ('scripts/upgrade.sh', 'release.json', 'branding/VERSION', 'branding/apply-branding.sh'):
             if not os.path.isfile(os.path.join(src_dir, needed)):
-                raise ValueError('package is missing %s' % needed)
+                raise Rejected('The package is not a valid Vizoure release (it is missing %s).' % needed,
+                               'Download vizoure-nms-<version>-install.tar.gz from the Assets list of the release (not the Source code archive).')
         meta = read_json(os.path.join(src_dir, 'release.json'), None)
         with open(os.path.join(src_dir, 'branding/VERSION')) as f:
             pkg_version = f.read().strip()
         if (not isinstance(meta, dict) or meta.get('version') != target or pkg_version != target
-                or meta.get('type') not in ('full', 'branding-only') or not ZBX_RE.match(str(meta.get('zabbix_version')))):
-            raise ValueError('release.json / VERSION do not match the requested release')
+                or meta.get('type') not in ('full', 'branding-only') or not ZBX_RE.match(str(meta.get('core_version')))):
+            raise Rejected('The package contents do not match the release it claims to be.',
+                           'Download the package again from the Vizoure releases page.')
         if meta.get('channel') == 'test' and conf['channel'] != 'test':
-            raise ValueError('this is a test release and the channel is "stable"')
+            raise Rejected('This is a test release.', 'To install it, set Update channel to Test and save.')
 
         # The updater (not the UI) decides the mode: branding-only only if declared AND Zabbix is unchanged.
         mode = 'full'
-        if meta['type'] == 'branding-only' and meta['zabbix_version'] == installed_zabbix_version():
+        if meta['type'] == 'branding-only' and meta['core_version'] == installed_core_version():
             mode = 'branding-only'
         run.status['mode'] = mode
         # keep a verified copy for recovery / re-run
@@ -633,7 +689,8 @@ def run_upgrade(req, source):
         prune_cache()
 
         run.set('upgrading', 'Running upgrade (%s)' % mode)
-        cmd = ['/bin/bash', os.path.join(src_dir, 'scripts/upgrade.sh'), meta['zabbix_version']]
+        changed = True
+        cmd = ['/bin/bash', os.path.join(src_dir, 'scripts/upgrade.sh'), meta['core_version']]
         if mode == 'branding-only':
             cmd.append('--branding-only')
         env = {'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C.UTF-8',
@@ -655,11 +712,27 @@ def run_upgrade(req, source):
                 proc.kill()
                 raise ValueError('upgrade timed out')
         rc = proc.wait()
+        if rc == 75:
+            # upgrade.sh refused to start (not enough disk space for the backup / backup failed): nothing was changed
+            changed = False
+            raise Rejected('The upgrade was not started because the database backup could not be made '
+                           '(usually not enough free disk space).',
+                           'Free up disk space on the server and try again; nothing was changed.')
         if rc != 0:
-            raise ValueError('upgrade.sh exited with status %d' % rc)
+            raise ValueError('the upgrade script exited with status %d' % rc)
         run.finish(True)
+    except Rejected as e:
+        if changed:
+            run.finish(False, short_error(e))
+        else:
+            run.reject(e.reason, e.fix)
     except Exception as e:  # noqa: BLE001 - every failure must end in a clean failed state
-        run.finish(False, short_error(e))
+        if changed:
+            run.finish(False, short_error(e))
+        else:
+            run.reject('The release could not be prepared: %s' % short_error(e),
+                       'Check the server\'s internet connection (or the proxy setting), or upgrade offline with the '
+                       '3 release files.')
     finally:
         shutil.rmtree(work, ignore_errors=True)
         for suffix in ('.tar.gz', '.SHA256SUMS', '.SHA256SUMS.sig'):

@@ -51,7 +51,7 @@ if [ -z "$NEW_VERSION" ]; then
     exit 1
 fi
 
-echo "  Upgrading to Zabbix ${NEW_VERSION}..."
+echo "  Upgrading Vizoure NMS core to ${NEW_VERSION}..."
 echo ""
 
 # ─────────────────────────────────────────────
@@ -77,12 +77,12 @@ NEED_BYTES=$(( ${DB_BYTES:-0} + 536870912 ))
 if [ "$FREE_BYTES" -lt "$NEED_BYTES" ]; then
     echo "ERROR: not enough free disk space for the database backup in ${BACKUP_DIR}."
     echo "       Free: $(( FREE_BYTES / 1048576 )) MB, needed: about $(( NEED_BYTES / 1048576 )) MB. Nothing was changed."
-    exit 1
+    exit 75   # 75 = refused to start, nothing changed (the web updater shows this as "not started", not "failed")
 fi
 if ! mysqldump -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME} | gzip > "$BACKUP_FILE" || ! gzip -t "$BACKUP_FILE"; then
     rm -f "$BACKUP_FILE"
     echo "ERROR: the database backup failed; nothing was changed."
-    exit 1
+    exit 75
 fi
 chmod 0600 "$BACKUP_FILE"
 # keep the 5 most recent backups
@@ -91,7 +91,7 @@ echo "  Backup saved to: $BACKUP_FILE"
 echo "VIZOURE_BACKUP_FILE=$BACKUP_FILE"
 
 if [ "$BRANDING_ONLY" = true ]; then
-    echo "[3/6] Skipped (Vizoure-only release: Zabbix packages unchanged)"
+    echo "[3/6] Skipped (Vizoure-only release: core packages unchanged)"
     echo "[4/6] Skipped"
     echo "[5/6] Skipped"
 else
@@ -104,7 +104,7 @@ else
     # ─────────────────────────────────────────────
     # 4. UPDATE ZABBIX PACKAGES
     # ─────────────────────────────────────────────
-    echo "[4/6] Updating Zabbix packages..."
+    echo "[4/6] Updating core packages..."
     ZABBIX_VERSION=$(echo "$NEW_VERSION" | cut -d. -f1-2)
 
     wget -q "https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_${ZABBIX_VERSION}+ubuntu24.04_all.deb" \

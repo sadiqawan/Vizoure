@@ -1,0 +1,106 @@
+#!/bin/bash
+# Vizoure NMS service control. Installed to /usr/local/sbin/vizoure by the installer/upgrader.
+#
+#   sudo vizoure start   [server|agent|web|db|all]
+#   sudo vizoure stop    [server|agent|web|db|all]
+#   sudo vizoure restart [server|agent|web|db|all]
+#   vizoure status
+#   vizoure logs [server|agent|web]
+#   vizoure version
+#
+# "all" (the default) works in dependency order: database -> server -> agent -> web server.
+set -u
+
+# internal service names (kept for package compatibility); customers use the short names above
+SVC_DB="mysql"
+SVC_SERVER="zabbix-server"
+SVC_AGENT="zabbix-agent"
+SVC_WEB="apache2"
+
+usage() {
+    sed -n 2,12p "$0" | sed 's/^# \{0,1\}//'
+    exit "${1:-1}"
+}
+
+label() {
+    case "$1" in
+        db) echo "Database" ;;
+        server) echo "Vizoure NMS server" ;;
+        agent) echo "Vizoure agent" ;;
+        web) echo "Web interface" ;;
+    esac
+}
+
+unit() {
+    case "$1" in
+        db) echo "$SVC_DB" ;;
+        server) echo "$SVC_SERVER" ;;
+        agent) echo "$SVC_AGENT" ;;
+        web) echo "$SVC_WEB" ;;
+    esac
+}
+
+need_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        exec sudo "$0" "$@"
+    fi
+}
+
+targets() {
+    # $1 = target word, $2 = "up" (start order) or "down" (stop order)
+    case "${1:-all}" in
+        all)
+            if [ "$2" = "up" ]; then echo "db server agent web"; else echo "web agent server db"; fi ;;
+        server|agent|web|db) echo "$1" ;;
+        *) echo "Unknown target: $1" >&2; usage 2 ;;
+    esac
+}
+
+act() {
+    local verb="$1" order="$2" target="${3:-all}" rc=0 t
+    need_root "$verb" "$target"
+    for t in $(targets "$target" "$order"); do
+        printf '%-20s %s ... ' "$(label "$t")" "$verb"
+        if systemctl "$verb" "$(unit "$t")" >/dev/null 2>&1; then echo "ok"; else echo "FAILED"; rc=1; fi
+    done
+    return $rc
+}
+
+CMD="${1:-}"
+[ -n "$CMD" ] || usage 1
+shift || true
+
+case "$CMD" in
+    start)   act start up "${1:-all}" ;;
+    stop)    act stop down "${1:-all}" ;;
+    restart)
+        need_root restart "${1:-all}"
+        "$0" stop "${1:-all}" && "$0" start "${1:-all}"
+        ;;
+    status)
+        rc=0
+        for t in db server agent web; do
+            state="$(systemctl is-active "$(unit "$t")" 2>/dev/null)"
+            printf '%-20s %s\n' "$(label "$t")" "$state"
+            [ "$state" = "active" ] || rc=3
+        done
+        v="$(cat /etc/vizoure/version 2>/dev/null || echo unknown)"
+        printf '%-20s %s\n' "Version" "$v"
+        exit $rc
+        ;;
+    logs)
+        case "${1:-server}" in
+            server) f=/var/log/zabbix/zabbix_server.log ;;
+            agent)  f=/var/log/zabbix/zabbix_agentd.log ;;
+            web)    f=/var/log/apache2/error.log ;;
+            *) usage 2 ;;
+        esac
+        need_root logs "${1:-server}"
+        exec tail -n 100 -f "$f"
+        ;;
+    version)
+        cat /etc/vizoure/version 2>/dev/null || { echo unknown; exit 1; }
+        ;;
+    -h|--help|help) usage 0 ;;
+    *) usage 1 ;;
+esac
