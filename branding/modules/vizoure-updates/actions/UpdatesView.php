@@ -46,6 +46,14 @@ class UpdatesView extends UpdatesBase {
 		$active = ($latest !== null && in_array($latest['state'] ?? '', ['queued', 'validating', 'downloading',
 			'verifying', 'extracting', 'upgrading'], true)) ? $latest : null;
 
+		// The progress panel only exists for a running upgrade. A failed/interrupted LAST run is shown as a
+		// compact warning with its recovery steps instead (and every run is in the history table).
+		$last_failed = null;
+
+		if ($latest !== null && ($latest['state'] ?? '') === 'failed' && (time() - (int) ($latest['ended'] ?? 0)) < 14 * 86400) {
+			$last_failed = $latest;
+		}
+
 		// Module actions are CSRF-checked against the full action name.
 		$tokens = [];
 
@@ -60,7 +68,8 @@ class UpdatesView extends UpdatesBase {
 			'channel' => $channel,
 			'available' => $available,
 			'history' => $this->history(),
-			'run' => $active ?? $latest,
+			'run' => $active,
+			'last_failed' => $last_failed,
 			'run_active' => $active !== null,
 			'tokens' => $tokens,
 			'max_upload' => self::MAX_UPLOAD,

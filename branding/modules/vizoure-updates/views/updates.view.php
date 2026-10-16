@@ -1,5 +1,6 @@
 <?php declare(strict_types = 0);
 /* Vizoure NMS — "Vizoure updates" page (Super admin only). All text below is escaped by the CTag layer.
+ * Colours come from the active Zabbix theme (no hard-coded light/dark values), see vizoure-updates.css.
  *
  * @var CView $this
  * @var array $data
@@ -7,20 +8,33 @@
 
 $state = $data['state'];
 $installed = $data['installed'];
+$releases_url = 'https://github.com/sadiqawan/Vizoure/releases';
+
+/** A time rendered in the user's Zabbix time zone, with the zone shown; the JS adds the browser's local time if it differs. */
+$time = function (int $ts): CTag {
+	$tz = new DateTimeZone(date_default_timezone_get());
+	$abbr = (new DateTime('@'.$ts))->setTimezone($tz)->format('T');
+
+	return (new CTag('time', true, zbx_date2str(DATE_TIME_FORMAT_SECONDS, $ts).' '.$abbr))
+		->addClass('js-vz-time')
+		->setAttribute('datetime', gmdate('c', $ts))
+		->setAttribute('data-ts', (string) $ts)
+		->setAttribute('data-offset', (string) $tz->getOffset(new DateTime('@'.$ts)));
+};
 
 // ----- status / settings -----
-$check_note = '';
+$check_note = [];
 
 if (!$state) {
-	$check_note = _('The updater service has not reported yet. It checks for releases every 6 hours, or press "Check now".');
+	$check_note[] = _('The updater service has not reported yet. It checks for releases every 6 hours, or press "Check now".');
 }
 elseif (($state['last_check_ok'] ?? null) === false) {
-	$check_note = _s('Last check failed: %1$s. You can still upgrade offline with a release package (below).',
+	$check_note[] = _s('Last check failed: %1$s. You can still upgrade offline with a release package (below).',
 		$state['last_error'] ?? ''
 	);
 }
 elseif (!empty($state['last_check_ts'])) {
-	$check_note = _s('Last checked: %1$s.', date(ZBX_FULL_DATE_TIME, (int) $state['last_check_ts']));
+	$check_note = [_('Last checked:').' ', $time((int) $state['last_check_ts'])];
 }
 
 $channel_select = (new CSelect('vz-channel'))
@@ -34,7 +48,7 @@ $channel_select = (new CSelect('vz-channel'))
 $status_box = (new CDiv([
 	(new CDiv([
 		(new CSpan(_('Installed version')))->addClass('vz-upd-label'),
-		(new CSpan($installed ?: _('unknown')))->addClass('vz-upd-value')->setId('vz-installed')
+		(new CSpan($installed ?: _('unknown')))->addClass('vz-upd-version')->setId('vz-installed')
 	]))->addClass('vz-upd-row'),
 	(new CDiv([
 		(new CSpan(_('Update channel')))->addClass('vz-upd-label'),
@@ -51,7 +65,32 @@ $status_box = (new CDiv([
 	]))->addClass('vz-upd-row')
 ]))->addClass('vz-upd-card');
 
-// ----- run / progress panel (filled by JS) -----
+// ----- last upgrade failed/interrupted (shown instead of an empty progress panel) -----
+$failed_box = null;
+
+if ($data['last_failed'] !== null) {
+	$f = $data['last_failed'];
+	$steps = new CTag('ol', true);
+
+	foreach ((array) ($f['recovery'] ?? []) as $s) {
+		$steps->addItem(new CTag('li', true, (string) $s));
+	}
+
+	$failed_box = (new CDiv([
+		(new CDiv([
+			(new CTag('strong', true, _s('The last upgrade (%1$s to %2$s) did not complete.', (string) ($f['from'] ?? '?'),
+				(string) ($f['to'] ?? '?')
+			))),
+			' ', (string) ($f['error'] ?? '')
+		]))->addClass('vz-upd-banner vz-upd-err')->addStyle('display:block'),
+		(new CTag('details', true, [
+			(new CTag('summary', true, _('Recovery steps')))->addClass(ZBX_STYLE_LINK_ACTION),
+			$steps
+		]))->addClass('vz-upd-recovery')
+	]))->addClass('vz-upd-card');
+}
+
+// ----- run / progress panel: hidden until an upgrade is running (filled by JS) -----
 $run_panel = (new CDiv([
 	(new CDiv())->addClass('vz-upd-run-title')->setId('vz-run-title'),
 	(new CDiv((new CDiv())->addClass('vz-upd-bar-fill')->setId('vz-run-bar')))->addClass('vz-upd-bar'),
@@ -59,11 +98,7 @@ $run_panel = (new CDiv([
 	(new CDiv())->addClass('vz-upd-banner')->setId('vz-run-banner'),
 	(new CDiv())->addClass('vz-upd-recovery')->setId('vz-run-recovery'),
 	(new CTag('pre', true))->addClass('vz-upd-log')->setId('vz-run-log')
-]))->addClass('vz-upd-card')->setId('vz-run-panel');
-
-if ($data['run'] === null) {
-	$run_panel->addStyle('display:none');
-}
+]))->addClass('vz-upd-card')->setId('vz-run-panel')->addStyle('display:none');
 
 // ----- available releases -----
 $available_table = (new CTableInfo())
@@ -76,11 +111,12 @@ foreach ($data['available'] as $rel) {
 		->addClass('js-vz-upgrade')
 		->setAttribute('data-version', $rel['tag'])
 		->setAttribute('data-prerelease', $rel['prerelease'] ? '1' : '0');
+	$released = $rel['published_at'] !== '' ? strtotime($rel['published_at']) : false;
 
 	$available_table->addRow([
 		(new CCol($rel['tag']))->addClass(ZBX_STYLE_NOWRAP),
 		$rel['prerelease'] ? _('test (pre-release)') : _('stable'),
-		$rel['published_at'] !== '' ? substr($rel['published_at'], 0, 10) : '-',
+		$released ? zbx_date2str(DATE_FORMAT, $released) : '-',
 		(new CTag('details', true, [
 			(new CTag('summary', true, _('Release notes')))->addClass(ZBX_STYLE_LINK_ACTION),
 			(new CTag('pre', true, $notes))->addClass('vz-upd-notes')
@@ -94,46 +130,77 @@ $available_block = $data['available']
 	: (new CDiv($installed ? _s('You are up to date (%1$s).', $installed) : _('No newer release is available.')))
 		->addClass('vz-upd-note')->setId('vz-uptodate');
 
-// ----- offline upload -----
+// ----- offline upload: ONE multi-file picker + checklist -----
+$file_rows = [
+	['package', _('Release package'), 'vizoure-nms-<version>-install.tar.gz'],
+	['sums', _('Checksums'), 'SHA256SUMS'],
+	['sig', _('Signature'), 'SHA256SUMS.sig']
+];
+$checklist = new CTag('ul', true);
+
+foreach ($file_rows as [$kind, $label, $expected]) {
+	$checklist->addItem(
+		(new CTag('li', true, [
+			(new CSpan("\u{25CB}"))->addClass('vz-upd-mark')->setAttribute('data-mark', $kind),
+			(new CSpan($label))->addClass('vz-upd-file-label'),
+			' ',
+			(new CSpan($expected))->addClass('vz-upd-mono vz-upd-note')->setAttribute('data-expected', $kind)
+		]))->setAttribute('data-kind', $kind)
+	);
+}
+
 $upload_form = (new CForm('post', null, 'multipart/form-data'))
 	->setId('vz-upload-form')
+	->setAttribute('onsubmit', 'return false;')
 	->addItem([
-		(new CDiv(_('Offline upgrade: choose the three files published with a release. The package must be signed by Vizoure; unsigned or modified packages are rejected.')))->addClass('vz-upd-note'),
 		(new CDiv([
-			(new CLabel(_('Package (vizoure-nms-<version>-install.tar.gz)'), 'vz-up-package')),
-			(new CInput('file', 'package'))->setId('vz-up-package')->setAttribute('accept', '.gz')
-		]))->addClass('vz-upd-row'),
+			_('Offline upgrade: download the 3 files of a release from the '),
+			(new CLink(_('Vizoure releases page'), $releases_url))->setTarget('_blank')
+				->setAttribute('rel', 'noopener noreferrer'),
+			_(' on a machine with internet access, then select all 3 here. The package must be signed by Vizoure; unsigned or modified packages are rejected.')
+		]))->addClass('vz-upd-note'),
 		(new CDiv([
-			(new CLabel(_('SHA256SUMS'), 'vz-up-sums')),
-			(new CInput('file', 'sums'))->setId('vz-up-sums')
-		]))->addClass('vz-upd-row'),
+			(new CDiv([
+				(new CTag('strong', true, _('Select the 3 release files'))),
+				(new CTag('div', true, _('Drop them here, or click to choose (hold Ctrl/Shift to select several).')))
+					->addClass('vz-upd-note'),
+				(new CInput('file', 'vz-files'))->setId('vz-files')->setAttribute('multiple', 'multiple')
+					->setAttribute('accept', '.gz,.sig,.txt,application/gzip,application/octet-stream,text/plain')
+			]))->addClass('vz-upd-drop')->setId('vz-drop'),
+			(new CDiv([
+				$checklist,
+				(new CDiv())->addClass('vz-upd-problems')->setId('vz-file-problems')
+			]))->addClass('vz-upd-checks')
+		]))->addClass('vz-upd-row vz-upd-upload-row'),
 		(new CDiv([
-			(new CLabel(_('SHA256SUMS.sig'), 'vz-up-sig')),
-			(new CInput('file', 'sig'))->setId('vz-up-sig')
-		]))->addClass('vz-upd-row'),
-		(new CDiv([
-			(new CButton('vz-upload', _('Upload and upgrade')))->setId('vz-upload'),
-			(new CSpan(_s('Each file may be up to %1$s MB.', $data['max_upload'] / 1048576)))->addClass('vz-upd-note')
+			(new CButton('vz-upload', _('Upload and upgrade')))->setId('vz-upload')->setAttribute('disabled', 'disabled'),
+			(new CSpan(_s('Each file may be up to %1$s MB. If SHA256SUMS is greyed out in the file dialog, switch the dialog filter to "All files".', $data['max_upload'] / 1048576)))->addClass('vz-upd-note')
 		]))->addClass('vz-upd-row')
 	]);
 
 // ----- history -----
 $history_table = (new CTableInfo())
-	->setHeader([_('When'), _('User'), _('From'), _('To'), _('Source'), _('Mode'), _('Result'), _('Backup')]);
+	->setHeader([_('When'), _('User'), _('From'), _('To'), _('Source'), _('Mode'), _('Result'), _('Backup')])
+	->setNoDataMessage(_('No upgrades yet'));
 
 $result_labels = ['success' => _('success'), 'failed' => _('failed'), 'interrupted' => _('interrupted')];
 
 foreach ($data['history'] as $h) {
 	$result = $result_labels[$h['result'] ?? ''] ?? (string) ($h['result'] ?? '');
+	$result_cell = [(new CSpan($result))->addClass(($h['result'] ?? '') === 'success' ? ZBX_STYLE_GREEN : ZBX_STYLE_RED)];
+
+	if (!empty($h['error'])) {
+		$result_cell[] = (new CDiv((string) $h['error']))->addClass('vz-upd-note vz-upd-small');
+	}
+
 	$history_table->addRow([
-		isset($h['started']) ? date(ZBX_FULL_DATE_TIME, (int) $h['started']) : '-',
+		isset($h['started']) ? $time((int) $h['started']) : '-',
 		(string) ($h['user'] ?? '-'),
 		(string) ($h['from'] ?? '-'),
 		(string) ($h['to'] ?? '-'),
 		(string) ($h['source'] ?? '-'),
 		(string) ($h['mode'] ?? '-'),
-		(new CSpan($result))->addClass(($h['result'] ?? '') === 'success' ? ZBX_STYLE_GREEN : ZBX_STYLE_RED)
-			->setTitle((string) ($h['error'] ?? '')),
+		$result_cell,
 		(new CSpan((string) ($h['backup_file'] ?? '-')))->addClass('vz-upd-mono')
 	]);
 }
@@ -142,10 +209,11 @@ foreach ($data['history'] as $h) {
 	->setTitle(_('Vizoure updates'))
 	->addItem([
 		$status_box,
+		$failed_box,
 		$run_panel,
 		(new CTag('h4', true, _('Available updates')))->addClass('vz-upd-h'),
 		$available_block,
-		(new CTag('h4', true, _('Upload release package (offline)')))->addClass('vz-upd-h'),
+		(new CTag('h4', true, _('Upgrade offline (release package)')))->addClass('vz-upd-h'),
 		(new CDiv($upload_form))->addClass('vz-upd-card'),
 		(new CTag('h4', true, _('Upgrade history')))->addClass('vz-upd-h'),
 		$history_table
@@ -156,5 +224,6 @@ $this->includeJsFile('updates.view.js.php', [
 	'tokens' => $data['tokens'],
 	'run' => $data['run'],
 	'run_active' => $data['run_active'],
-	'installed' => $installed
+	'installed' => $installed,
+	'max_upload' => $data['max_upload']
 ]);

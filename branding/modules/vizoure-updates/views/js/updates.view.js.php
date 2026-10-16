@@ -9,6 +9,7 @@ $js_data = json_encode([
 	'run' => $data['run'],
 	'run_active' => $data['run_active'],
 	'installed' => $data['installed'],
+	'max_upload' => $data['max_upload'],
 	'url' => 'vizoure.php',
 	'text' => [
 		'confirm_title' => _('Upgrade Vizoure NMS'),
@@ -27,7 +28,8 @@ $js_data = json_encode([
 		'starting' => _('Request sent. Waiting for the updater service...'),
 		'error_generic' => _('The request failed.'),
 		'checking' => _('Check requested. The result appears in a few seconds...'),
-		'saved' => _('Settings saved.')
+		'saved' => _('Settings saved.'),
+		'in_browser' => _('your browser time')
 	]
 ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 ?>
@@ -66,11 +68,31 @@ $js_data = json_encode([
 		return e;
 	}
 
+	/* ---------- times: server/Zabbix-user time zone is shown by PHP; add the browser's if it differs ---------- */
+	document.querySelectorAll('.js-vz-time').forEach((t) => {
+		const ts = parseInt(t.dataset.ts, 10);
+		const zbx_offset = parseInt(t.dataset.offset, 10);
+		const browser_offset = -new Date(ts * 1000).getTimezoneOffset() * 60;
+
+		if (zbx_offset !== browser_offset) {
+			const local = new Date(ts * 1000).toLocaleString(undefined, {
+				year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+				hour12: false, timeZoneName: 'short'
+			});
+			t.appendChild(el('span', ' (' + local + ', ' + D.text.in_browser + ')', 'vz-upd-note vz-upd-small'));
+		}
+	});
+
+	/* ---------- progress panel (only exists while an upgrade runs) ---------- */
+	function showPanel() {
+		$('vz-run-panel').style.display = '';
+	}
+
 	function banner(kind, text) {
 		const b = $('vz-run-banner');
 		b.className = 'vz-upd-banner' + (kind ? ' vz-upd-' + kind : '');
 		b.textContent = text || '';
-		b.style.display = text ? '' : 'none';
+		b.style.display = text ? 'block' : 'none';
 	}
 
 	function percent(run) {
@@ -86,7 +108,7 @@ $js_data = json_encode([
 	}
 
 	function renderRun(run, log) {
-		$('vz-run-panel').style.display = '';
+		showPanel();
 		$('vz-run-title').textContent = run.to ? ('Upgrade ' + (run.from || '?') + ' → ' + run.to) : 'Upgrade';
 		$('vz-run-step').textContent = run.step || '';
 
@@ -97,6 +119,7 @@ $js_data = json_encode([
 		const pre = $('vz-run-log');
 		const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
 		pre.textContent = (log || []).join('\n');
+		pre.style.display = (log && log.length) ? '' : 'none';
 
 		if (atEnd) {
 			pre.scrollTop = pre.scrollHeight;
@@ -125,9 +148,10 @@ $js_data = json_encode([
 	let outageSince = null;
 
 	function setBusy(busy) {
-		document.querySelectorAll('.js-vz-upgrade, #vz-upload, #vz-check-now, #vz-save-config').forEach((b) => {
+		document.querySelectorAll('.js-vz-upgrade, #vz-check-now, #vz-save-config').forEach((b) => {
 			b.disabled = busy;
 		});
+		$('vz-upload').disabled = busy || !uploadReady();
 	}
 
 	function poll(runId) {
@@ -190,6 +214,18 @@ $js_data = json_encode([
 		tick();
 	}
 
+	function startRunUi(title) {
+		showPanel();
+		$('vz-run-title').textContent = title;
+		$('vz-run-step').textContent = D.text.starting;
+		$('vz-run-bar').style.width = '4%';
+		$('vz-run-bar').className = 'vz-upd-bar-fill';
+		$('vz-run-log').textContent = '';
+		$('vz-run-log').style.display = 'none';
+		$('vz-run-recovery').textContent = '';
+		banner('', '');
+	}
+
 	function confirmUpgrade(version, prerelease) {
 		const content = el('div', undefined, 'vz-upd-confirm');
 		content.appendChild(el('p', D.text.confirm_intro));
@@ -213,20 +249,18 @@ $js_data = json_encode([
 					isSubmit: true,
 					action: () => {
 						post('upgrade', {version: version}).then((res) => {
+							startRunUi('Upgrade → ' + version);
+
 							if (!res.ok) {
-								$('vz-run-panel').style.display = '';
 								banner('err', res.error || D.text.error_generic);
 								return;
 							}
 
-							$('vz-run-panel').style.display = '';
-							$('vz-run-title').textContent = 'Upgrade → ' + version;
-							$('vz-run-step').textContent = D.text.starting;
-							$('vz-run-log').textContent = '';
-							$('vz-run-recovery').textContent = '';
-							banner('', '');
 							poll(res.id);
-						}).catch(() => banner('err', D.text.error_generic));
+						}).catch(() => {
+							startRunUi('Upgrade → ' + version);
+							banner('err', D.text.error_generic);
+						});
 					}
 				},
 				{title: D.text.cancel, class: 'btn-alt js-cancel', cancel: true, action: () => {}}
@@ -264,31 +298,124 @@ $js_data = json_encode([
 		});
 	});
 
+	/* ---------- offline upload: ONE multi-file picker, identified by name, validated before upload ---------- */
+	const RULES = {
+		package: {re: /^vizoure-nms-v\d+\.\d+\.\d+-vz\d+-install\.tar\.gz$/, expected: 'vizoure-nms-<version>-install.tar.gz'},
+		sums: {re: /^SHA256SUMS$/, expected: 'SHA256SUMS'},
+		sig: {re: /^SHA256SUMS\.sig$/, expected: 'SHA256SUMS.sig'}
+	};
+	let picked = {package: null, sums: null, sig: null};
+
+	function uploadReady() {
+		return !!(picked.package && picked.sums && picked.sig);
+	}
+
+	function explain(f) {
+		const n = f.name;
+
+		if (/^sha256sums?\.(txt|sha256|asc|sig\.txt)$/i.test(n) || /^sha256sums?$/i.test(n) || /checksum|\.sha256$/i.test(n)) {
+			return '"' + n + '" is not the release checksum file. Use the file named exactly SHA256SUMS (no extension) from the Vizoure release page; a checksum list from another folder or website will not work.';
+		}
+
+		if (/\.(sig|asc|gpg|minisig)$/i.test(n)) {
+			return '"' + n + '" is not the release signature. The signature must be named exactly SHA256SUMS.sig.';
+		}
+
+		if (/\.(tar\.gz|tgz|zip|tar|gz)$/i.test(n)) {
+			return '"' + n + '" is not a Vizoure release package. Expected vizoure-nms-<version>-install.tar.gz from the release assets (not the "Source code" archive).';
+		}
+
+		return '"' + n + '" is not one of the 3 release files (vizoure-nms-<version>-install.tar.gz, SHA256SUMS, SHA256SUMS.sig).';
+	}
+
+	function renderPicked(problems) {
+		['package', 'sums', 'sig'].forEach((k) => {
+			const li = document.querySelector('#vz-upload-form li[data-kind="' + k + '"]');
+			const mark = li.querySelector('[data-mark]');
+			const exp = li.querySelector('[data-expected]');
+			const f = picked[k];
+
+			mark.textContent = f ? '✔' : '○';
+			mark.className = 'vz-upd-mark' + (f ? ' vz-upd-mark-ok' : '');
+			exp.textContent = f ? f.name + '  (' + (f.size / 1024).toFixed(f.size < 10240 ? 1 : 0) + ' KB)' : RULES[k].expected + ' – missing';
+		});
+
+		const box = $('vz-file-problems');
+		box.textContent = '';
+		problems.forEach((p) => box.appendChild(el('div', '✖ ' + p, 'vz-upd-problem')));
+		$('vz-upload').disabled = polling || !uploadReady();
+	}
+
+	function takeFiles(fileList) {
+		const problems = [];
+		picked = {package: null, sums: null, sig: null};
+
+		Array.prototype.forEach.call(fileList, (f) => {
+			const kind = Object.keys(RULES).find((k) => RULES[k].re.test(f.name));
+
+			if (!kind) {
+				problems.push(explain(f));
+			}
+			else if (f.size > D.max_upload) {
+				problems.push('"' + f.name + '" is larger than the ' + (D.max_upload / 1048576) + ' MB limit.');
+			}
+			else if (picked[kind]) {
+				problems.push('Two files look like the ' + kind + ' file: "' + picked[kind].name + '" and "' + f.name + '". Select only one of each.');
+			}
+			else {
+				picked[kind] = f;
+			}
+		});
+
+		renderPicked(problems);
+	}
+
+	const fileInput = $('vz-files');
+	fileInput.addEventListener('change', () => takeFiles(fileInput.files));
+
+	const drop = $('vz-drop');
+	['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => {
+		e.preventDefault();
+		drop.classList.add('vz-upd-drop-over');
+	}));
+	['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => {
+		e.preventDefault();
+		drop.classList.remove('vz-upd-drop-over');
+	}));
+	drop.addEventListener('drop', (e) => takeFiles(e.dataTransfer.files));
+	drop.addEventListener('click', (e) => {
+		if (e.target !== fileInput) {
+			fileInput.click();
+		}
+	});
+
 	$('vz-upload').addEventListener('click', () => {
-		const fd = new FormData($('vz-upload-form'));
-		$('vz-run-panel').style.display = '';
-		banner('', '');
+		if (!uploadReady()) {
+			return;
+		}
+
+		const fd = new FormData();
+		fd.append('package', picked.package, picked.package.name);
+		fd.append('sums', picked.sums, picked.sums.name);
+		fd.append('sig', picked.sig, picked.sig.name);
+		startRunUi('Offline upgrade');
 
 		post('upload', null, fd).then((res) => {
 			if (!res.ok) {
 				banner('err', res.error || D.text.error_generic);
+				$('vz-run-step').textContent = '';
 				return;
 			}
 
-			$('vz-run-title').textContent = 'Offline upgrade';
-			$('vz-run-step').textContent = D.text.starting;
-			$('vz-run-log').textContent = '';
-			$('vz-run-recovery').textContent = '';
 			poll(res.id);
 		}).catch(() => banner('err', D.text.error_generic));
 	});
 
-	if (D.run) {
-		renderRun(D.run, []);
+	renderPicked([]);
 
-		if (D.run_active) {
-			poll(D.run.id);
-		}
+	if (D.run && D.run_active) {
+		renderRun(D.run, []);
+		poll(D.run.id);
 	}
 })();
 </script>
