@@ -6,7 +6,9 @@ set -e
 # Run AFTER base Zabbix install completes
 # ─────────────────────────────────────────────
 
-REPO_RAW="https://raw.githubusercontent.com/sadiqawan/Vizoure/main"
+# ISS-34: same ref variable as install-nms.sh/upgrade.sh (exported by them).
+VIZOURE_REF="${VIZOURE_REF:-main}"
+REPO_RAW="https://raw.githubusercontent.com/sadiqawan/Vizoure/${VIZOURE_REF}"
 UI="/usr/share/zabbix/ui"
 
 # ISS-30 fix (md/04): local-first, GitHub-fallback for every asset this
@@ -24,7 +26,8 @@ fetch_local_or_github() {
         cp "$local_path" "$dest"
         echo "  $(basename "$dest"): copied from local checkout"
     else
-        curl -sSL "${REPO_RAW}/${repo_path}" -o "$dest"
+        # -f: a 404 must fail the run, never be saved as the asset (set -e).
+        curl -fsSL "${REPO_RAW}/${repo_path}" -o "$dest"
         echo "  $(basename "$dest"): fetched from GitHub (no local copy found)"
     fi
 }

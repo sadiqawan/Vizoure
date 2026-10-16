@@ -1,0 +1,11 @@
+# Files install-nms.sh/upgrade.sh download into /tmp/vizoure-branding when run
+# standalone (no repo checkout). One path per line, relative to branding/.
+# Keep in sync: bash scripts/dev/check-manifest.sh
+apply-branding.sh
+branding.conf
+logos/favicon.ico
+logos/favicon.png
+logos/login-bg.png
+logos/logo.png
+header/top-header.css
+header/top-header.js

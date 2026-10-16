@@ -7,7 +7,24 @@ set -eo pipefail
 # manual recovery steps that go with this failure point.
 trap 'echo "ERROR: install-nms.sh failed at line $LINENO. Check for a pre-existing backup under /tmp/vizoure-db-backup-*.sql.gz before retrying — see README.md Recovery section." >&2' ERR
 
-REPO_RAW="https://raw.githubusercontent.com/sadiqawan/Vizoure/main"
+# Single ref variable (ISS-34): branch or tag every GitHub fetch below uses
+# (script, branding/ manifest, header files, logos). Default is main; set
+# VIZOURE_REF=<tag-or-branch> to pin an install or to test a branch. Exported
+# so apply-branding.sh (a child process) uses the very same ref.
+VIZOURE_REF="${VIZOURE_REF:-main}"
+export VIZOURE_REF
+REPO_RAW="https://raw.githubusercontent.com/sadiqawan/Vizoure/${VIZOURE_REF}"
+# Rule B / ISS-30 fix (md/04): if this script is being run from a real repo
+# checkout (scripts/install-nms.sh with branding/ as a sibling directory),
+# use that local branding/ folder instead of fetching apply-branding.sh (and
+# everything it fetches) from GitHub. Falls back to the old GitHub-only
+# behavior when run standalone (e.g. the README's curl-pipe quick install,
+# which only ever has this one file on disk, no sibling branding/).
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" 2>/dev/null && pwd || echo "")"
+REPO_ROOT_LOCAL=""
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/../branding/apply-branding.sh" ]; then
+    REPO_ROOT_LOCAL="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
 DB_NAME="vizoure"
 DB_USER="vizoure"
 DB_PASSWORD="AES@admin"
@@ -198,10 +215,27 @@ systemctl restart zabbix-server zabbix-agent apache2
 systemctl enable zabbix-server zabbix-agent apache2
 echo "[8/9] Applying Vizoure branding..."
 apt install -y imagemagick python3 curl
-rm -f /tmp/apply-branding.sh
-curl -sSL "${REPO_RAW}/branding/apply-branding.sh" -o /tmp/apply-branding.sh
-chmod +x /tmp/apply-branding.sh
-bash /tmp/apply-branding.sh
+rm -rf /tmp/vizoure-branding
+if [ -n "$REPO_ROOT_LOCAL" ]; then
+    echo "  Using local repo checkout at $REPO_ROOT_LOCAL/branding"
+    cp -r "$REPO_ROOT_LOCAL/branding" /tmp/vizoure-branding
+else
+    # Standalone fallback (ISS-34): download the WHOLE branding/ set listed in
+    # branding/MANIFEST (script + logos + header/*), not just apply-branding.sh.
+    # curl -f + set -e: a missing file aborts loudly instead of installing a
+    # "404: Not Found" page as a stylesheet.
+    echo "  No local checkout found — fetching branding/ (ref ${VIZOURE_REF}) from GitHub"
+    mkdir -p /tmp/vizoure-branding
+    curl -fsSL "${REPO_RAW}/branding/MANIFEST" -o /tmp/vizoure-branding/MANIFEST
+    while IFS= read -r BRANDING_FILE; do
+        case "$BRANDING_FILE" in ""|\#*) continue ;; esac
+        mkdir -p "/tmp/vizoure-branding/$(dirname "$BRANDING_FILE")"
+        curl -fsSL "${REPO_RAW}/branding/${BRANDING_FILE}" -o "/tmp/vizoure-branding/${BRANDING_FILE}"
+        test -s "/tmp/vizoure-branding/${BRANDING_FILE}"
+    done < /tmp/vizoure-branding/MANIFEST
+fi
+chmod +x /tmp/vizoure-branding/apply-branding.sh
+bash /tmp/vizoure-branding/apply-branding.sh
 
 echo "[9/9] Configuring via API..."
 ZBX_URL="http://localhost/vizoure/api_jsonrpc.php"
