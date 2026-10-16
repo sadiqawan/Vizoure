@@ -1,0 +1,483 @@
+/* Vizoure NMS — horizontal top header (replaces the Zabbix sidebar).
+ * Theme-agnostic structural rules only. Per-theme colors are appended
+ * directly to each assets/styles/<theme>.css by apply-branding.sh, using
+ * that theme's own real color values (see branding/apply-branding.sh).
+ * Marker: VIZOURE_TOPHEADER_CSS
+ *
+ * Specificity notes (root causes found by inspecting the real page, md/04 ISS-32):
+ *  - the theme ships `.menu-main > li:not(.is-expanded) .submenu {max-height:0 !important}`
+ *    (0,3,1): only an #id-scoped selector beats it, hence #vizoure-top-header below.
+ *  - Zabbix ships unscoped `header, footer {min-width:1200px}`, `header ul {...}`,
+ *    `.form-search .search {position:absolute}` — all reset explicitly here.
+ */
+
+:root {
+	--vizoure-header-height: 48px;
+	--vz-label-size: 13px;
+	--vz-icon-size: 18px;
+	--vz-item-pad: 10px;
+}
+
+body {
+	flex-direction: column;
+}
+
+.vizoure-top-header {
+	display: flex;
+	align-items: center;
+	height: var(--vizoure-header-height);
+	min-width: 0; /* undo Zabbix `header, footer {min-width: 1200px}` */
+	flex: 0 0 auto;
+	padding: 0 8px;
+	box-sizing: border-box;
+	position: relative;
+	z-index: 998;
+	font-size: var(--vz-label-size);
+	/* closed (invisible) flyouts must not widen the header's scrollable area */
+	overflow-x: clip;
+}
+
+/* Zabbix clips direct children of <header> (overflow: hidden): that cut off the
+ * user dropdown/search panel and made focus() scroll the clipped box. */
+.vizoure-top-header > *,
+.vizoure-top-header .vz-search,
+.vizoure-top-header .vz-header-user {
+	overflow: visible;
+}
+
+.vizoure-top-header ul {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	max-height: none;
+}
+
+.vizoure-top-header .vz-header-left {
+	display: flex;
+	align-items: center;
+	flex: 0 0 auto;
+	margin-right: 8px;
+}
+
+.vizoure-top-header .logo {
+	display: flex;
+	align-items: center;
+	height: var(--vizoure-header-height);
+}
+
+.vizoure-top-header .logo img {
+	max-height: 28px;
+	width: auto;
+}
+
+/* Sidebar leftovers: compact logo, server name and collapse buttons have
+ * no meaning in a top bar. */
+.vizoure-top-header .logo .zabbix-logo-sidebar-compact,
+.vizoure-top-header .server-name,
+.vizoure-top-header .sidebar-header-buttons {
+	display: none;
+}
+
+/* ---- Horizontal main menu (priority+ : JS moves overflow into "More") ---- */
+
+.vizoure-top-header .vz-header-nav {
+	flex: 1 1 0;
+	min-width: 0;
+	overflow: visible;
+}
+
+.vizoure-top-header .menu-main {
+	display: flex;
+	flex-wrap: nowrap;
+	align-items: stretch;
+	height: var(--vizoure-header-height);
+}
+
+.vizoure-top-header .menu-main > li {
+	position: relative;
+	flex: 0 0 auto;
+	display: flex;
+	align-items: stretch;
+}
+
+.vizoure-top-header .menu-main > li > a,
+.vizoure-top-header .menu-user > li > a {
+	display: flex;
+	align-items: center;
+	height: 100%;
+	box-sizing: border-box;
+	padding: 0 var(--vz-item-pad);
+	border-left: 0;
+	border-bottom: 3px solid transparent;
+	font-size: var(--vz-label-size);
+	line-height: 1;
+	white-space: nowrap;
+}
+
+/* Icons: 18px, label sits right of it. The theme draws icons with ::before. */
+.vizoure-top-header [class^="zi-"]::before,
+.vizoure-top-header [class*=" zi-"]::before {
+	font-size: var(--vz-icon-size);
+	line-height: 1;
+}
+
+.vizoure-top-header .menu-main > li > a[class^="zi-"],
+.vizoure-top-header .menu-main > li > a[class*=" zi-"] {
+	gap: 6px;
+}
+
+/* Caret: every item with a submenu gets a DOWN caret (sidebar used "<"). */
+#vizoure-top-header .menu-main .has-submenu > a::after,
+#vizoure-top-header .menu-user .has-submenu > a::after,
+#vizoure-top-header .vz-more > a::after {
+	content: '';
+	position: static;
+	top: auto;
+	right: auto;
+	display: inline-block;
+	flex: 0 0 auto;
+	width: 5px;
+	height: 5px;
+	margin: -3px 0 0 6px;
+	border: solid currentColor;
+	border-width: 0 1.5px 1.5px 0;
+	background: none;
+	opacity: .75;
+	transform: rotate(45deg);
+	transition: transform .15s ease;
+}
+
+#vizoure-top-header .vz-open > a::after {
+	transform: rotate(-135deg) !important;
+	margin-top: 3px !important;
+}
+
+/* ---- Dropdowns ---- */
+
+#vizoure-top-header .menu-main li .submenu,
+#vizoure-top-header .menu-user li .submenu {
+	display: block;
+	position: absolute;
+	top: 100%;
+	left: 0;
+	z-index: 1000;
+	min-width: 200px;
+	max-height: none !important;
+	height: auto;
+	overflow: visible; /* nested flyouts must never be clipped */
+	padding: 6px 0;
+	margin: 0;
+	opacity: 0;
+	visibility: hidden;
+	transform: translateY(-4px);
+	transition: opacity .12s ease, transform .12s ease, visibility .12s;
+	pointer-events: none;
+	box-shadow: 0 6px 16px rgba(0, 0, 0, .35);
+}
+
+#vizoure-top-header li.vz-open > .submenu {
+	opacity: 1;
+	visibility: visible;
+	transform: none;
+	pointer-events: auto;
+}
+
+#vizoure-top-header .submenu > li {
+	position: relative;
+	display: block;
+	padding: 0; /* theme indents every li after the first by 10px */
+	margin: 0;
+}
+
+#vizoure-top-header .submenu a {
+	display: flex;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 8px;
+	box-sizing: border-box;
+	padding: 7px 14px;
+	font-size: var(--vz-label-size);
+	line-height: 1.2;
+	white-space: nowrap;
+}
+
+/* Nested submenu: flyout to the SIDE of its parent row. */
+/* The theme parks closed nested menus at `left: -9999px !important` (specificity
+ * 0,5,0 via :not(.is-expanded)); only an !important + #id rule can override it. */
+#vizoure-top-header .menu-main .submenu .has-submenu > .submenu,
+#vizoure-top-header .menu-user .submenu .has-submenu > .submenu {
+	top: -6px;
+	left: 100% !important;
+	right: auto !important;
+	transform: translateX(-4px);
+}
+
+#vizoure-top-header .submenu li.vz-open > .submenu {
+	transform: none;
+}
+
+/* Caret inside a dropdown points to the side the flyout opens on. */
+#vizoure-top-header .submenu .has-submenu > a::after {
+	margin: 0 0 0 auto;
+	position: relative;
+	top: 0; /* theme positions the arrow with top: 17px */
+	left: -2px;
+	transform: rotate(-45deg);
+}
+
+#vizoure-top-header .submenu .has-submenu.vz-open > a::after {
+	transform: rotate(-45deg) !important;
+	margin: 0 0 0 auto !important;
+}
+
+/* JS adds these when a menu would run off the viewport edge. */
+#vizoure-top-header .vz-align-right > .submenu {
+	left: auto;
+	right: 0;
+}
+
+#vizoure-top-header .menu-main .submenu .has-submenu.vz-flip > .submenu {
+	left: auto !important;
+	right: 100% !important;
+	transform: translateX(4px);
+}
+
+#vizoure-top-header .submenu .vz-flip.vz-open > .submenu {
+	transform: none;
+}
+
+#vizoure-top-header .submenu .vz-flip > a::after {
+	transform: rotate(135deg);
+}
+
+#vizoure-top-header .submenu .vz-flip.vz-open > a::after {
+	transform: rotate(135deg) !important;
+}
+
+/* "More" entry (injected by JS only while something overflows). */
+.vizoure-top-header .vz-more[hidden] {
+	display: none;
+}
+
+.vizoure-top-header .vz-more > .submenu {
+	left: auto;
+	right: 0;
+}
+
+.vizoure-top-header .vz-more > a > .vz-more-icon::before {
+	content: '\2026';
+	font-size: var(--vz-icon-size);
+}
+
+/* ---- Right side: search + user menu, icon-only ---- */
+
+.vizoure-top-header .vz-header-right {
+	display: flex;
+	align-items: center;
+	flex: 0 0 auto;
+	height: var(--vizoure-header-height);
+	margin-left: 4px;
+	gap: 2px;
+}
+
+.vizoure-top-header .vz-search-toggle,
+.vizoure-top-header .menu-user > li > a {
+	width: 36px;
+	padding: 0;
+	justify-content: center;
+	font-size: 0; /* label text hidden; tooltip + aria-label carry the name */
+}
+
+.vizoure-top-header .vz-search-toggle {
+	display: flex;
+	align-items: center;
+	height: 100%;
+	margin: 0;
+	border: 0;
+	border-bottom: 3px solid transparent;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.vizoure-top-header .vz-search-toggle::before {
+	font-size: var(--vz-icon-size);
+}
+
+#vizoure-top-header .menu-user .has-submenu > a::after {
+	display: none;
+}
+
+.vizoure-top-header .menu-user {
+	display: flex;
+	align-items: stretch;
+	height: 100%;
+}
+
+.vizoure-top-header .menu-user > li {
+	position: relative;
+	display: flex;
+	align-items: stretch;
+}
+
+.vizoure-top-header .vz-header-user {
+	height: 100%;
+}
+
+#vizoure-top-header .menu-user li .submenu {
+	left: auto;
+	right: 0;
+}
+
+/* Search: reset the unscoped sidebar search rules, show as a dropdown panel
+ * that expands from the icon. */
+.vizoure-top-header .vz-search {
+	position: relative;
+	height: 100%;
+	display: flex;
+	align-items: stretch;
+}
+
+.vizoure-top-header .vz-search .form-search {
+	position: absolute;
+	top: 100%;
+	right: 0;
+	z-index: 1000;
+	display: none;
+	width: 280px;
+	height: auto; /* theme sets .form-search {height: 24px} */
+	margin: 0;
+	padding: 8px;
+	box-sizing: border-box;
+	box-shadow: 0 6px 16px rgba(0, 0, 0, .35);
+}
+
+.vizoure-top-header .vz-search.vz-open .form-search {
+	display: block;
+}
+
+.vizoure-top-header .vz-search .form-search .search {
+	position: static;
+	display: block;
+	width: 100%;
+	height: 30px;
+	padding: 0 30px 0 8px;
+	box-sizing: border-box;
+	opacity: 1;
+}
+
+.vizoure-top-header .vz-search .form-search .js-search {
+	position: absolute;
+	top: 11px;
+	right: 11px;
+	width: 24px;
+	height: 24px;
+}
+
+/* ---- Hamburger (collapsed) mode, <1024px ---- */
+
+.vizoure-top-header .vz-hamburger {
+	display: none;
+	flex: 0 0 auto;
+	width: 36px;
+	height: 36px;
+	margin-left: 4px;
+	border: 0;
+	background: transparent;
+	cursor: pointer;
+	position: relative;
+	color: inherit;
+}
+
+.vizoure-top-header .vz-hamburger span,
+.vizoure-top-header .vz-hamburger span::before,
+.vizoure-top-header .vz-hamburger span::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 2px;
+	background: currentColor;
+}
+
+.vizoure-top-header .vz-hamburger span {
+	left: 8px;
+	right: 8px;
+}
+
+.vizoure-top-header .vz-hamburger span { top: 17px; }
+.vizoure-top-header .vz-hamburger span::before { top: -7px; }
+.vizoure-top-header .vz-hamburger span::after { top: 7px; }
+
+@media (max-width: 1023px) {
+	.vizoure-top-header .vz-header-nav {
+		display: none;
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		max-height: calc(100vh - var(--vizoure-header-height));
+		overflow-y: auto;
+		background: inherit;
+		box-shadow: 0 6px 16px rgba(0, 0, 0, .35);
+	}
+
+	.vizoure-top-header.vz-mobile-open .vz-header-nav {
+		display: block;
+	}
+
+	.vizoure-top-header .vz-header-nav {
+		flex: 0 0 auto;
+	}
+
+	.vizoure-top-header .vz-header-left {
+		flex: 1 1 auto;
+	}
+
+	.vizoure-top-header .menu-main {
+		display: block;
+		height: auto;
+	}
+
+	.vizoure-top-header .menu-main > li {
+		display: block;
+	}
+
+	.vizoure-top-header .menu-main > li > a {
+		height: auto;
+		padding: 12px 14px;
+	}
+
+	#vizoure-top-header .menu-main li .submenu {
+		position: static;
+		display: none;
+		opacity: 1;
+		visibility: visible;
+		transform: none;
+		pointer-events: auto;
+		min-width: 0;
+		padding: 0 0 0 16px;
+		box-shadow: none;
+	}
+
+	#vizoure-top-header .menu-main li.vz-open > .submenu {
+		display: block;
+	}
+
+	#vizoure-top-header .menu-main .submenu .submenu {
+		top: auto;
+		left: auto;
+	}
+
+	.vizoure-top-header .vz-more {
+		display: none !important;
+	}
+
+	.vizoure-top-header .vz-hamburger {
+		display: block;
+	}
+
+	.vizoure-top-header .vz-header-left .logo img {
+		max-width: 150px;
+	}
+}

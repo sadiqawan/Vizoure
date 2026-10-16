@@ -9,6 +9,26 @@ set -e
 REPO_RAW="https://raw.githubusercontent.com/sadiqawan/Vizoure/main"
 UI="/usr/share/zabbix/ui"
 
+# ISS-30 fix (md/04): local-first, GitHub-fallback for every asset this
+# script fetches (not just the new header files) — "local" means a
+# "branding" sibling directory next to wherever this script itself was
+# invoked from (e.g. /tmp/vizoure-branding/apply-branding.sh with
+# /tmp/vizoure-branding/logos/ and /tmp/vizoure-branding/header/ alongside
+# it, exactly what install-nms.sh/upgrade.sh now set up when run from a
+# real repo checkout).
+BRANDING_LOCAL_DIR="$(dirname "$(readlink -f "$0")")"
+
+fetch_local_or_github() {
+    local local_path="$1" repo_path="$2" dest="$3"
+    if [ -f "$local_path" ]; then
+        cp "$local_path" "$dest"
+        echo "  $(basename "$dest"): copied from local checkout"
+    else
+        curl -sSL "${REPO_RAW}/${repo_path}" -o "$dest"
+        echo "  $(basename "$dest"): fetched from GitHub (no local copy found)"
+    fi
+}
+
 echo "=== Applying Vizoure NMS Branding ==="
 
 # ─────────────────────────────────────────────
@@ -18,10 +38,10 @@ echo "[1/11] Installing logo and favicon assets..."
 
 mkdir -p "$UI/assets/img"
 
-curl -sSL "${REPO_RAW}/branding/logos/logo.png" -o /tmp/vizoure-logo-raw.png
-curl -sSL "${REPO_RAW}/branding/logos/favicon.png" -o /tmp/vizoure-favicon-raw.png
-curl -sSL "${REPO_RAW}/branding/logos/favicon.ico" -o /tmp/vizoure-favicon.ico
-curl -sSL "${REPO_RAW}/branding/logos/login-bg.png" -o "$UI/assets/img/login_background.png"
+fetch_local_or_github "$BRANDING_LOCAL_DIR/logos/logo.png" "branding/logos/logo.png" /tmp/vizoure-logo-raw.png
+fetch_local_or_github "$BRANDING_LOCAL_DIR/logos/favicon.png" "branding/logos/favicon.png" /tmp/vizoure-favicon-raw.png
+fetch_local_or_github "$BRANDING_LOCAL_DIR/logos/favicon.ico" "branding/logos/favicon.ico" /tmp/vizoure-favicon.ico
+fetch_local_or_github "$BRANDING_LOCAL_DIR/logos/login-bg.png" "branding/logos/login-bg.png" "$UI/assets/img/login_background.png"
 
 convert /tmp/vizoure-logo-raw.png -resize x40 "$UI/assets/img/logo.png"
 
@@ -387,6 +407,243 @@ HTMLHEADER="$UI/include/classes/html/CHtmlPageHeader.php"
 if [ -f "$HTMLHEADER" ]; then
     sed -i "s/content=\"Zabbix SIA\"/content=\"Vizoure\"/" "$HTMLHEADER"
 fi
+
+# ─────────────────────────────────────────────
+# 14. TOP HEADER (replaces the sidebar)
+# ─────────────────────────────────────────────
+echo "[14/14] Installing horizontal top header..."
+
+# ISS-30 fix (md/04): local-first, GitHub-fallback, same helper defined at
+# the top of this script (now also used for the logo/favicon downloads).
+fetch_local_or_github "$BRANDING_LOCAL_DIR/header/top-header.css" \
+    "branding/header/top-header.css" "$UI/assets/styles/vizoure-top-header.css"
+fetch_local_or_github "$BRANDING_LOCAL_DIR/header/top-header.js" \
+    "branding/header/top-header.js" "$UI/js/vizoure-top-header.js"
+
+# --- new partial: app/partials/layout.htmlpage.topheader.php ---
+# Not fetched (local or GitHub) at all — written directly here, same pattern
+# already used for local/conf/brand.conf.php above. Marker-guarded: only
+# (re)written if missing or not yet carrying the marker, so a re-run doesn't
+# need to touch it once it's current.
+TOPHEADER_PHP="$UI/app/partials/layout.htmlpage.topheader.php"
+# V2 marker (ISS-32): the partial changed shape (search collapsed into an icon
+# toggle, server-name no longer rendered), so a file carrying only the old V1
+# marker is rewritten.
+if [ -f "$TOPHEADER_PHP" ] && grep -q "VIZOURE_TOPHEADER_PARTIAL_V2" "$TOPHEADER_PHP"; then
+    echo "  layout.htmlpage.topheader.php already present — skipping"
+else
+    cat > "$TOPHEADER_PHP" << 'TOPHEADEREOF'
+<?php
+/* VIZOURE_TOPHEADER_PARTIAL_V2 — horizontal top header, replaces the sidebar.
+ * Reuses the exact same menu.main / menu.user components as the stock
+ * sidebar (CMenuHelper::getMainMenu()/getUserMenu(), registered once in
+ * ZBase.php) — role filtering and active-page selection are inherited
+ * automatically, nothing here re-implements them.
+ *
+ * @var CPartial $this
+ * @var array $data
+ */
+
+$logo = (new CLink(
+	[makeLogo(LOGO_TYPE_SIDEBAR), makeLogo(LOGO_TYPE_SIDEBAR_COMPACT)],
+	CMenuHelper::getFirstUrl()
+))->addClass(ZBX_STYLE_LOGO);
+
+// Server name is intentionally not rendered in the top bar (ISS-32).
+
+$search_icon = (new CButtonIcon(ZBX_ICON_SEARCH, _('Search')))
+	->addClass('js-search')
+	->setAttribute('type', 'submit');
+
+if (getRequest('search', '') === '') {
+	$search_icon->setAttribute('disabled', '');
+}
+
+$search_form = (new CForm('get', 'zabbix.php'))
+	->addClass(ZBX_STYLE_FORM_SEARCH)
+	->addClass('submenu')
+	->setAttribute('role', 'search')
+	->addItem([
+		(new CVar('action', 'search'))->removeId(),
+		(new CTextBox('search', getRequest('search', ''), false, 255))
+			->addClass(ZBX_STYLE_SEARCH)
+			->setAttribute('aria-label', _('type here to search'))
+			->disableAutocomplete(),
+		$search_icon
+	]);
+
+$search_toggle = (new CButtonIcon(ZBX_ICON_SEARCH, _('Search')))
+	->addClass('vz-search-toggle')
+	->setAttribute('type', 'button')
+	->setAttribute('aria-label', _('Search'))
+	->setAttribute('aria-expanded', 'false');
+
+$hamburger = (new CTag('button', true, (new CTag('span', true))))
+	->addClass('vz-hamburger')
+	->setAttribute('type', 'button')
+	->setAttribute('aria-label', _('Menu'))
+	->setAttribute('aria-expanded', 'false')
+	->setAttribute('aria-controls', 'vz-top-nav');
+
+(new CTag('header', true))
+	->addClass('vizoure-top-header')
+	->setId('vizoure-top-header')
+	->addItem([
+		(new CDiv($logo))->addClass('vz-header-left'),
+		(new CTag('nav', true, APP::Component()->get('menu.main')->addClass('menu-main')))
+			->addClass('vz-header-nav')
+			->setId('vz-top-nav')
+			->setAttribute('role', 'navigation')
+			->setAttribute('aria-label', _('Main navigation')),
+		(new CDiv([
+			(new CDiv([$search_toggle, $search_form]))->addClass('vz-search'),
+			(new CTag('nav', true, APP::Component()->get('menu.user')->addClass('menu-user')))
+				->addClass('vz-header-user')
+				->setAttribute('role', 'navigation')
+				->setAttribute('aria-label', _('User menu'))
+		]))->addClass('vz-header-right'),
+		$hamburger
+	])
+	->show();
+TOPHEADEREOF
+    echo "  layout.htmlpage.topheader.php written"
+fi
+
+# --- patch app/views/layout.htmlpage.php: render the top header instead of
+#     the sidebar. Marker-guarded; anchor-checked; fails loudly (not a
+#     silent skip) if the expected original text isn't found, per the rule
+#     that every core-file patch must do this from now on. ---
+LAYOUT_VIEW="$UI/app/views/layout.htmlpage.php"
+if grep -q "VIZOURE_TOPHEADER_PATCH" "$LAYOUT_VIEW"; then
+    echo "  layout.htmlpage.php already patched — skipping"
+elif grep -qF -- "new CPartial('layout.htmlpage.aside'" "$LAYOUT_VIEW"; then
+    sed -i "s/new CPartial('layout.htmlpage.aside'/new CPartial('layout.htmlpage.topheader' \/* VIZOURE_TOPHEADER_PATCH *\//" "$LAYOUT_VIEW"
+    echo "  layout.htmlpage.php patched to render the top header"
+else
+    echo "ERROR: Zabbix version mismatch, patch layout.htmlpage.php not applied"
+    exit 1
+fi
+
+# --- patch app/partials/layout.htmlpage.header.php: load our CSS/JS on
+#     every normal page. Same marker/anchor/loud-failure rule as above. ---
+HEADER_PARTIAL="$UI/app/partials/layout.htmlpage.header.php"
+if grep -q "VIZOURE_TOPHEADER_PATCH" "$HEADER_PARTIAL"; then
+    echo "  layout.htmlpage.header.php already patched — skipping"
+elif grep -qF -- "->addJsFile((new CUrl('js/browsers.js'))->getUrl())" "$HEADER_PARTIAL"; then
+    sed -i "s#->addJsFile((new CUrl('js/browsers.js'))->getUrl())#->addJsFile((new CUrl('js/browsers.js'))->getUrl()) \/\/ VIZOURE_TOPHEADER_PATCH\n\t\t->addJsFile((new CUrl('js/vizoure-top-header.js'))->getUrl())\n\t\t->addCssFile((new CUrl('assets/styles/vizoure-top-header.css'))->getUrl())#" "$HEADER_PARTIAL"
+    echo "  layout.htmlpage.header.php patched to load top-header.css/js"
+else
+    echo "ERROR: Zabbix version mismatch, patch layout.htmlpage.header.php not applied"
+    exit 1
+fi
+
+# --- patch include/page_header.php: legacy-style pages (sysmaps.php, etc.)
+#     bypass layout.htmlpage.php entirely and render the sidebar directly
+#     from here (found 2026-10-16, ISS-32 — Maps still showed the old
+#     sidebar). Two independent edits, each with its own idempotency check
+#     (so a half-applied state can never be skipped) and its own anchor
+#     check; fail loudly if an anchor is gone. ---
+LEGACY_HEADER="$UI/include/page_header.php"
+
+if grep -q "VIZOURE_TOPHEADER_PATCH" "$LEGACY_HEADER"; then
+    echo "  page_header.php: partial swap already applied — skipping"
+elif grep -qF -- "new CPartial('layout.htmlpage.aside'" "$LEGACY_HEADER"; then
+    sed -i "s/new CPartial('layout.htmlpage.aside'/new CPartial('layout.htmlpage.topheader' \/* VIZOURE_TOPHEADER_PATCH *\//" "$LEGACY_HEADER"
+    echo "  page_header.php: sidebar partial swapped for the top header"
+else
+    echo "ERROR: Zabbix version mismatch, patch include/page_header.php (partial swap) not applied"
+    exit 1
+fi
+
+if grep -qF "vizoure-top-header.js" "$LEGACY_HEADER"; then
+    echo "  page_header.php: CSS/JS load already applied — skipping"
+elif grep -qF -- "->addJsFile((new CUrl('js/browsers.js'))->getUrl());" "$LEGACY_HEADER"; then
+    sed -i "s#->addJsFile((new CUrl('js/browsers.js'))->getUrl());#->addJsFile((new CUrl('js/browsers.js'))->getUrl())\n\t\t->addJsFile((new CUrl('js/vizoure-top-header.js'))->getUrl())\n\t\t->addCssFile((new CUrl('assets/styles/vizoure-top-header.css'))->getUrl());#" "$LEGACY_HEADER"
+    echo "  page_header.php: top-header.css/js load added"
+else
+    echo "ERROR: Zabbix version mismatch, patch include/page_header.php (CSS/JS load) not applied"
+    exit 1
+fi
+
+# --- per-theme color blocks, appended to each theme's own compiled CSS,
+#     using THAT theme's real extracted values (md/04 plan) — marker-guarded
+#     so a re-run never duplicates (unlike the older logo-CSS step above,
+#     logged as ISS-31 for Batch 2, left as-is for now). ---
+append_theme_css() {
+    local theme_file="$1" block="$2"
+    if [ ! -f "$theme_file" ]; then
+        echo "  WARNING: $theme_file not found — skipping top-header colors"
+        return
+    fi
+    if grep -q "VIZOURE_TOPHEADER_CSS_V2" "$theme_file"; then
+        echo "  $(basename "$theme_file"): top-header colors already present — skipping"
+    else
+        printf '%s\n' "$block" >> "$theme_file"
+        echo "  $(basename "$theme_file"): top-header colors applied"
+    fi
+}
+
+append_theme_css "$UI/assets/styles/blue-theme.css" '
+/* VIZOURE_TOPHEADER_CSS_V2 (blue-theme — real values from .sidebar/.menu-main in this file) */
+.vizoure-top-header { background: #0a466a; }
+.vizoure-top-header .menu-main > li > a, .vizoure-top-header .menu-user > li > a, .vizoure-top-header .vz-search-toggle, .vizoure-top-header .vz-more > a { color: #ebeef0; }
+.vizoure-top-header .menu-main > li > a:hover, .vizoure-top-header .menu-main > li > a:focus,
+.vizoure-top-header .menu-user > li > a:hover, .vizoure-top-header .menu-user > li > a:focus, .vizoure-top-header .vz-search-toggle:hover, .vizoure-top-header .vz-search-toggle:focus, .vizoure-top-header .vz-more > a:hover, .vizoure-top-header .vz-more > a:focus { background: #092637; color: #ffffff; }
+.vizoure-top-header .menu-main > li.is-selected > a { background: #0a3c5b; border-bottom-color: #87d1ff; color: #ffffff; }
+.vizoure-top-header .menu-main [class^="zi-"]::before, .vizoure-top-header .menu-main [class*=" zi-"]::before,
+.vizoure-top-header .menu-user [class^="zi-"]::before, .vizoure-top-header .menu-user [class*=" zi-"]::before, .vizoure-top-header .vz-search-toggle::before { color: #8cb2ca; }
+.vizoure-top-header .submenu { background: #051620; }
+.vizoure-top-header .submenu a { background: #0e354d; color: #ebeef0; }
+.vizoure-top-header .submenu a:hover, .vizoure-top-header .submenu a:focus { background: #092637; color: #ffffff; }
+.vizoure-top-header .submenu > li.is-selected > a { background: #0b2d42; color: #ffffff; }
+.vizoure-top-header .vz-hamburger { color: #ebeef0; }'
+
+append_theme_css "$UI/assets/styles/dark-theme.css" '
+/* VIZOURE_TOPHEADER_CSS_V2 (dark-theme — real values from .sidebar/.menu-main in this file) */
+.vizoure-top-header { background: #454545; }
+.vizoure-top-header .menu-main > li > a, .vizoure-top-header .menu-user > li > a, .vizoure-top-header .vz-search-toggle, .vizoure-top-header .vz-more > a { color: #f2f2f2; }
+.vizoure-top-header .menu-main > li > a:hover, .vizoure-top-header .menu-main > li > a:focus,
+.vizoure-top-header .menu-user > li > a:hover, .vizoure-top-header .menu-user > li > a:focus, .vizoure-top-header .vz-search-toggle:hover, .vizoure-top-header .vz-search-toggle:focus, .vizoure-top-header .vz-more > a:hover, .vizoure-top-header .vz-more > a:focus { background: #0e0e0e; color: #ffffff; }
+.vizoure-top-header .menu-main > li.is-selected > a { background: #202020; border-bottom-color: #c5c5c5; color: #ffffff; }
+.vizoure-top-header .menu-main [class^="zi-"]::before, .vizoure-top-header .menu-main [class*=" zi-"]::before,
+.vizoure-top-header .menu-user [class^="zi-"]::before, .vizoure-top-header .menu-user [class*=" zi-"]::before, .vizoure-top-header .vz-search-toggle::before { color: #9c9c9c; }
+.vizoure-top-header .submenu { background: #0d0f11; }
+.vizoure-top-header .submenu a { background: #2b2b2b; color: #f2f2f2; }
+.vizoure-top-header .submenu a:hover, .vizoure-top-header .submenu a:focus { background: #0e0e0e; color: #ffffff; }
+.vizoure-top-header .submenu > li.is-selected > a { background: #1c1c1c; color: #ffffff; }
+.vizoure-top-header .vz-hamburger { color: #f2f2f2; }'
+
+append_theme_css "$UI/assets/styles/hc-dark.css" '
+/* VIZOURE_TOPHEADER_CSS_V2 (hc-dark — real values from .sidebar/.menu-main in this file) */
+.vizoure-top-header { background: #ffffff; }
+.vizoure-top-header .menu-main > li > a, .vizoure-top-header .menu-user > li > a, .vizoure-top-header .vz-search-toggle, .vizoure-top-header .vz-more > a { color: #000000; }
+.vizoure-top-header .menu-main > li > a:hover, .vizoure-top-header .menu-main > li > a:focus,
+.vizoure-top-header .menu-user > li > a:hover, .vizoure-top-header .menu-user > li > a:focus, .vizoure-top-header .vz-search-toggle:hover, .vizoure-top-header .vz-search-toggle:focus, .vizoure-top-header .vz-more > a:hover, .vizoure-top-header .vz-more > a:focus { background: #1a1a1a; color: #ffffff; }
+.vizoure-top-header .menu-main > li.is-selected > a { background: #ffffff; border-bottom-color: #0c0c0c; color: #000000; }
+.vizoure-top-header .menu-main [class^="zi-"]::before, .vizoure-top-header .menu-main [class*=" zi-"]::before,
+.vizoure-top-header .menu-user [class^="zi-"]::before, .vizoure-top-header .menu-user [class*=" zi-"]::before, .vizoure-top-header .vz-search-toggle::before { color: #000000; }
+.vizoure-top-header .submenu { background: #f3f3f3; }
+.vizoure-top-header .submenu a { background: #cccccc; color: #000000; }
+.vizoure-top-header .submenu a:hover, .vizoure-top-header .submenu a:focus { background: #1a1a1a; color: #ffffff; }
+.vizoure-top-header .submenu > li.is-selected > a { background: #0c0c0c; color: #ffffff; }
+.vizoure-top-header .vz-hamburger { color: #000000; }'
+
+append_theme_css "$UI/assets/styles/hc-light.css" '
+/* VIZOURE_TOPHEADER_CSS_V2 (hc-light — real values from .sidebar/.menu-main in this file) */
+.vizoure-top-header { background: #000000; }
+.vizoure-top-header .menu-main > li > a, .vizoure-top-header .menu-user > li > a, .vizoure-top-header .vz-search-toggle, .vizoure-top-header .vz-more > a { color: #ffffff; }
+.vizoure-top-header .menu-main > li > a:hover, .vizoure-top-header .menu-main > li > a:focus,
+.vizoure-top-header .menu-user > li > a:hover, .vizoure-top-header .menu-user > li > a:focus, .vizoure-top-header .vz-search-toggle:hover, .vizoure-top-header .vz-search-toggle:focus, .vizoure-top-header .vz-more > a:hover, .vizoure-top-header .vz-more > a:focus { background: #e6e6e6; color: #000000; }
+.vizoure-top-header .menu-main > li.is-selected > a { background: #000000; border-bottom-color: #f3f3f3; color: #ffffff; }
+.vizoure-top-header .menu-main [class^="zi-"]::before, .vizoure-top-header .menu-main [class*=" zi-"]::before,
+.vizoure-top-header .menu-user [class^="zi-"]::before, .vizoure-top-header .menu-user [class*=" zi-"]::before, .vizoure-top-header .vz-search-toggle::before { color: #ffffff; }
+.vizoure-top-header .submenu { background: #0d0d0d; }
+.vizoure-top-header .submenu a { background: #333333; color: #ffffff; }
+.vizoure-top-header .submenu a:hover, .vizoure-top-header .submenu a:focus { background: #e6e6e6; color: #000000; }
+.vizoure-top-header .submenu > li.is-selected > a { background: #f3f3f3; color: #000000; }
+.vizoure-top-header .vz-hamburger { color: #ffffff; }'
+
+echo "  Top header installed"
 
 echo "[11/11] Restarting Apache..."
 systemctl restart apache2
