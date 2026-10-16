@@ -61,6 +61,9 @@ Report all of the above to you before proceeding to Step 1.
 Normal edit in this working copy, same as any other task. No VM involvement yet.
 
 ### Step 2 — Copy the change to the VM
+Before copying (and before every commit) run `bash scripts/dev/check-crlf.sh` and `bash scripts/dev/check-manifest.sh`.
+To test a branch/tag instead of a local copy, set `VIZOURE_REF=<branch-or-tag>` (see md/04 ISS-34).
+
 Two sub-cases, pick based on what changed:
 - **A single script changed** (e.g. just `install-nms.sh`): write it to `/tmp/` on
   the VM via `scp` (or `ssh ... 'cat > /tmp/x.sh'`), matching Rule A's "write to /tmp
