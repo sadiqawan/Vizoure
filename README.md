@@ -153,10 +153,47 @@ sudo bash /tmp/upgrade.sh 7.4.12      # add: sudo env VIZOURE_REF=<tag-or-branch
 ```
 
 The upgrade script automatically:
-1. Backs up the database to `/tmp/vizoure-db-backup-<date>.sql.gz`
+1. Backs up the database to `/var/backups/vizoure/vizoure-db-backup-<date>.sql.gz`
 2. Updates all Zabbix packages
 3. Reapplies complete Vizoure branding, including the top-header navigation (existing installs get it on upgrade)
 4. Restarts all services
+
+---
+
+## Updating Vizoure NMS
+
+### From the web UI (recommended)
+
+Sign in as a **Super admin** and open **Administration -> Vizoure updates**. A small badge in the top header tells you when an
+update is available. The page shows the installed version, the newer releases with their release notes, and an
+**Upgrade to vX** button. The confirmation dialog explains what happens (database backup, service restart, a few minutes of
+downtime); then you see live progress and the result. The page reconnects by itself while the web server restarts. Every
+upgrade is recorded in the upgrade history (who, when, from/to, result, backup file) and in the Zabbix audit log.
+
+- **Channels:** *Stable* (default) shows normal releases only. *Test* also shows pre-releases; use it only on test systems.
+- **Check now** refreshes the list immediately (it is also checked every 6 hours). A proxy can be set on the same page.
+- Only releases **signed by Vizoure** are accepted. Unsigned, modified or older packages are rejected with a clear message.
+
+### Offline (no access to GitHub)
+
+Download these three files from the release page on a connected machine: `vizoure-nms-<version>-install.tar.gz`, `SHA256SUMS`
+and `SHA256SUMS.sig`. On **Administration -> Vizoure updates**, use *Upload release package (offline)* and choose the three files
+(each up to 2 MB). The upgrade runs exactly like an online one.
+
+### First-time update setup (installs made before this feature)
+
+Installations from before `v7.4.15-vz2` do not have the updater yet. Run **one** CLI upgrade of a release that includes it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sadiqawan/Vizoure/v7.4.15-vz2/scripts/upgrade.sh -o /tmp/upgrade.sh
+sudo env VIZOURE_REF=v7.4.15-vz2 bash /tmp/upgrade.sh 7.4.15
+```
+
+From then on updates are done from the UI. New installs, the ISO and the OVA already include it.
+
+### From the command line
+
+`upgrade.sh` (see **Upgrade** above) still works and is what the web updater runs.
 
 ---
 
@@ -167,7 +204,7 @@ fails partway through, it stops (now with an error message naming the line it
 failed at) but does not undo anything it already did. Recovery is manual:
 
 - **Database backups**: `upgrade.sh` always takes one before touching anything, at
-  `/tmp/vizoure-db-backup-<date>.sql.gz`. `install-nms.sh` only takes one if it
+  `/var/backups/vizoure/vizoure-db-backup-<date>.sql.gz`. `install-nms.sh` only takes one if it
   detects an existing database (e.g. a re-run) — a genuinely fresh install has
   nothing to back up yet. To restore: `gunzip -c <backup file> | mysql -uroot
   vizoure`.

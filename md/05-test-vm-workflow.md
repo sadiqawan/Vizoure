@@ -270,3 +270,25 @@ improvised in response to what was actually found on the box, not planned in adv
            rebuild from autoinstall ISO, or — not yet
            available — run a teardown script)
 ```
+
+## Update feature checklist (ISS-36, `md/09-update-system.md`)
+
+Run on a VM that has the updater installed (fresh install or first-time CLI upgrade). Test releases are signed with a
+**throwaway** key in scratch space (add its public key to `/etc/vizoure/allowed_signers` or to the test release's own
+`allowed_signers`); the real key only signs real releases through ssh-agent.
+
+| # | Check | Expected |
+|---|---|---|
+| 1 | Page as Super admin | Installed version, channel, releases, upload form, history; menu entry under Administration |
+| 2 | User role and Admin role | No menu entry, no header badge, every action "Access denied" |
+| 3 | POST without / with a bad CSRF token, GET on POST actions | Rejected; nothing appears in `/var/spool/vizoure-updater/requests` |
+| 4 | Tampered package, tampered SHA256SUMS, garbage/missing signature, signature by another key | Rejected with a clear message; version unchanged |
+| 5 | Package older than installed | Rejected ("not newer") |
+| 6 | Test package on the *stable* channel | Rejected; accepted after switching to *test* |
+| 7 | Branding-only release (same Zabbix) | Fast path (steps 3-5 skipped), backup taken, version file updated, change visible, history row |
+| 8 | Full release with GitHub blocked (`/etc/hosts`) | "Check now" shows a clear offline message; offline upload still succeeds |
+| 9 | Hard-kill the updater at step 4/6 (`systemctl kill -s KILL vizoure-updater.service`) | Run becomes "interrupted", recovery steps + backup path shown; re-running the same release succeeds, services up |
+| 10 | Apache restarts mid-upgrade | UI shows "server is restarting", reconnects, ends in success |
+| 11 | Backups | Only the last 5 kept in `/var/backups/vizoure`, mode 0600 in a 0700 dir |
+| 12 | Online path | Stable channel hides a pre-release; test channel shows it; button + confirm dialog; upgrade; history row; the tag is deleted afterwards |
+| 13 | Unit tests | `python3 scripts/dev/updater_tests/test_updater.py` on a Linux host (20 tests) |
