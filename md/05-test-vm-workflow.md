@@ -19,6 +19,8 @@ missing git setup.
 
 ## Credential handling (applies for the lifetime of this rule, not just once)
 
+Test web credentials are supplied via `.claude/settings.local.json` (local only, outside the repo). Never commit.
+
 - VM IP, username, password are received in chat and used **only** for that session's
   SSH/API calls. They are never written to any file in this repo — not to a `md/`
   file, not to a script, not to a commit message, not to a log file saved to disk.
