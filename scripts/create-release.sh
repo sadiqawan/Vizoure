@@ -66,6 +66,17 @@ cp "$DEB_FILE" "$RELEASE_DIR/"
 cp "${BUILD_DIR}/scripts/install-nms.sh" "$RELEASE_DIR/vizoure-install-${VERSION}.sh"
 cp "${BUILD_DIR}/scripts/upgrade.sh" "$RELEASE_DIR/vizoure-upgrade-${VERSION}.sh"
 
+# Install tarball: scripts/ + branding/ (incl. branding/header/*) so a release can be
+# installed local-first without reaching GitHub for branding assets.
+bash "${BUILD_DIR}/scripts/dev/check-manifest.sh"
+test -s "${BUILD_DIR}/branding/header/top-header.css" && test -s "${BUILD_DIR}/branding/header/top-header.js"
+TARDIR="vizoure-nms-${VERSION}"
+rm -rf "/tmp/${TARDIR}" && mkdir -p "/tmp/${TARDIR}"
+cp -r "${BUILD_DIR}/scripts" "${BUILD_DIR}/branding" "/tmp/${TARDIR}/"
+rm -rf "/tmp/${TARDIR}/scripts/dev"
+tar -C /tmp -czf "$RELEASE_DIR/${TARDIR}-install.tar.gz" "${TARDIR}"
+tar -tzf "$RELEASE_DIR/${TARDIR}-install.tar.gz" | grep -q "branding/header/top-header.css"
+
 cd "$RELEASE_DIR"
 sha256sum * > SHA256SUMS.txt
 
@@ -99,8 +110,8 @@ Vizoure NMS is a fully rebranded network monitoring system based on Zabbix ${VER
 ## Quick Install
 
 \`\`\`bash
-curl -sSL https://raw.githubusercontent.com/${REPO}/main/scripts/install-nms.sh -o /tmp/vizoure-install.sh
-sudo bash /tmp/vizoure-install.sh
+curl -fsSL https://raw.githubusercontent.com/${REPO}/${TAG}/scripts/install-nms.sh -o /tmp/vizoure-install.sh
+sudo env VIZOURE_REF=${TAG} bash /tmp/vizoure-install.sh
 \`\`\`
 
 ## Install Linux Agent
@@ -110,6 +121,10 @@ wget https://github.com/${REPO}/releases/download/${TAG}/vizoure-agent_${VERSION
 sudo dpkg -i vizoure-agent_${VERSION}_amd64.deb
 \`\`\`
 
+## Offline / local-first install
+
+Download \`vizoure-nms-${VERSION}-install.tar.gz\`, extract it and run \`sudo bash vizoure-nms-${VERSION}/scripts/install-nms.sh\` — branding (including the top header) is taken from the extracted copy.
+
 ## Default Credentials
 - **Web UI:** \`http://<server-ip>/vizoure\`
 - **Username:** \`admin\`
@@ -117,8 +132,8 @@ sudo dpkg -i vizoure-agent_${VERSION}_amd64.deb
 
 ## Upgrade
 \`\`\`bash
-curl -sSL https://raw.githubusercontent.com/${REPO}/main/scripts/upgrade.sh -o /tmp/upgrade.sh
-sudo bash /tmp/upgrade.sh ${VERSION}
+curl -fsSL https://raw.githubusercontent.com/${REPO}/${TAG}/scripts/upgrade.sh -o /tmp/upgrade.sh
+sudo env VIZOURE_REF=${TAG} bash /tmp/upgrade.sh ${VERSION}
 \`\`\`"
 
 RELEASE_RESPONSE=$(curl -s -X POST \

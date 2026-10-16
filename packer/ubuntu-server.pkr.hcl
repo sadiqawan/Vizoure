@@ -66,10 +66,10 @@ build {
   provisioner "shell" {
     inline = [
       "echo '=== Vizoure NMS Packer Provisioner ==='",
-      "curl -fsSL -o /tmp/install-nms.sh https://raw.githubusercontent.com/sadiqawan/Vizoure/main/scripts/install-nms.sh",
+      "curl -fsSL -o /tmp/install-nms.sh https://raw.githubusercontent.com/sadiqawan/Vizoure/${var.vizoure_ref}/scripts/install-nms.sh",
       "test -s /tmp/install-nms.sh",
       "head -c2 /tmp/install-nms.sh | grep -q '#!'",
-      "sudo bash /tmp/install-nms.sh"
+      "sudo env VIZOURE_REF=${var.vizoure_ref} bash /tmp/install-nms.sh"
     ]
   }
 

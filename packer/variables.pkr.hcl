@@ -64,3 +64,9 @@ variable "esxi_datastore" {
 variable "output_dir" {
   default = "../dist"
 }
+
+variable "vizoure_ref" {
+  type        = string
+  default     = "main"
+  description = "Git branch or tag of github.com/sadiqawan/Vizoure that install-nms.sh and its branding/ files are fetched from (exported to the installer as VIZOURE_REF)."
+}

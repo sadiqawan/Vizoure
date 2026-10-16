@@ -41,10 +41,21 @@
 > **Requirements:** Ubuntu 24.04 LTS, 2 vCPU, 2GB RAM minimum
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/sadiqawan/Vizoure/main/scripts/install-nms.sh \
+curl -fsSL https://raw.githubusercontent.com/sadiqawan/Vizoure/main/scripts/install-nms.sh \
     -o /tmp/vizoure-install.sh
 sudo bash /tmp/vizoure-install.sh
 ```
+
+**Pin or test a specific version.** Every GitHub fetch (the script itself, `branding/`, the top-header files, logos) uses one variable, `VIZOURE_REF` (a tag or branch, default `main`):
+
+```bash
+VIZOURE_REF=v7.4.9   # or a branch, e.g. feature/top-header
+curl -fsSL https://raw.githubusercontent.com/sadiqawan/Vizoure/${VIZOURE_REF}/scripts/install-nms.sh \
+    -o /tmp/vizoure-install.sh
+sudo env VIZOURE_REF=${VIZOURE_REF} bash /tmp/vizoure-install.sh
+```
+
+**From a repo checkout / release tarball** (no GitHub access needed for branding): run `sudo bash scripts/install-nms.sh` from the extracted tree — the sibling `branding/` folder (including `branding/header/`) is used first, GitHub is only the fallback.
 
 ### Option 2 — Deploy OVA (VMware/ESXi)
 
@@ -136,15 +147,15 @@ Data appears in **Monitoring → Latest data** within 1-2 minutes.
 To upgrade to a new Zabbix version:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/sadiqawan/Vizoure/main/scripts/upgrade.sh \
+curl -fsSL https://raw.githubusercontent.com/sadiqawan/Vizoure/main/scripts/upgrade.sh \
     -o /tmp/upgrade.sh
-sudo bash /tmp/upgrade.sh 7.4.12
+sudo bash /tmp/upgrade.sh 7.4.12      # add: sudo env VIZOURE_REF=<tag-or-branch> bash ... to pin
 ```
 
 The upgrade script automatically:
 1. Backs up the database to `/tmp/vizoure-db-backup-<date>.sql.gz`
 2. Updates all Zabbix packages
-3. Reapplies complete Vizoure branding
+3. Reapplies complete Vizoure branding, including the top-header navigation (existing installs get it on upgrade)
 4. Restarts all services
 
 ---

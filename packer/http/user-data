@@ -20,9 +20,20 @@ autoinstall:
     - wget
     - git
   late-commands:
-    # ISS-01 fix (md/04): download to a file first, verify it's non-empty and
-    # actually a shell script, THEN run it — never pipe curl straight into bash.
-    - curtin in-target --target=/target -- curl -fsSL -o /tmp/install-nms.sh https://raw.githubusercontent.com/sadiqawan/Vizoure/main/scripts/install-nms.sh
-    - curtin in-target --target=/target -- test -s /tmp/install-nms.sh
-    - curtin in-target --target=/target -- bash -c "head -c2 /tmp/install-nms.sh | grep -q '#!'"
-    - curtin in-target --target=/target -- bash /tmp/install-nms.sh
+    # Rule B (offline-first): build-iso.sh copies scripts/ + branding/ (incl.
+    # branding/header/*) onto the ISO at /cdrom/vizoure/repo — prefer that copy.
+    - if [ -d /cdrom/vizoure/repo ]; then mkdir -p /target/opt && cp -r /cdrom/vizoure/repo /target/opt/vizoure-repo; fi
+    # ISS-01 fix (md/04): never pipe curl into bash. GitHub fallback (ISO built
+    # without a repo copy, or Packer's http_directory flow): download to a file,
+    # verify, then run. VIZOURE_REF:-main is rewritten by build-iso.sh to pin the ISO's ref.
+    - >-
+      curtin in-target --target=/target -- bash -c
+      'if [ -f /opt/vizoure-repo/scripts/install-nms.sh ]; then
+      bash /opt/vizoure-repo/scripts/install-nms.sh;
+      else
+      export VIZOURE_REF="${VIZOURE_REF:-main}";
+      curl -fsSL -o /tmp/install-nms.sh "https://raw.githubusercontent.com/sadiqawan/Vizoure/${VIZOURE_REF}/scripts/install-nms.sh" &&
+      test -s /tmp/install-nms.sh &&
+      head -c2 /tmp/install-nms.sh | grep -q "#!" &&
+      bash /tmp/install-nms.sh;
+      fi'

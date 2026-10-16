@@ -7,6 +7,9 @@ set -e
 # ─────────────────────────────────────────────
 
 VERSION="${1:-7.4.9}"
+# Branch/tag baked into the ISO's GitHub fallback (ISS-34); default main.
+VIZOURE_REF="${VIZOURE_REF:-main}"
+REPO_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 UBUNTU_ISO="packer/ubuntu-24.04.4-live-server-amd64.iso"
 OUTPUT_ISO="dist/vizoure-nms-${VERSION}.iso"
 WORK_DIR="/tmp/vizoure-iso"
@@ -27,8 +30,25 @@ xorriso -osirrox on \
 echo "[2/4] Injecting Vizoure autoinstall config..."
 mkdir -p "$WORK_DIR/source-files/vizoure"
 
-curl -sSL "https://raw.githubusercontent.com/sadiqawan/Vizoure/main/packer/http/user-data" \
-    -o "$WORK_DIR/source-files/vizoure/user-data"
+# Local-first (Rule B): use this checkout's user-data; fall back to GitHub (-f: fail on 404).
+if [ -f "$REPO_DIR/packer/http/user-data" ]; then
+    cp "$REPO_DIR/packer/http/user-data" "$WORK_DIR/source-files/vizoure/user-data"
+else
+    curl -fsSL "https://raw.githubusercontent.com/sadiqawan/Vizoure/${VIZOURE_REF}/packer/http/user-data" \
+        -o "$WORK_DIR/source-files/vizoure/user-data"
+fi
+# Pin the ref used by the autoinstall's GitHub fallback.
+sed -i "s/VIZOURE_REF:-main/VIZOURE_REF:-${VIZOURE_REF}/" "$WORK_DIR/source-files/vizoure/user-data"
+
+# Ship scripts/ + branding/ (incl. branding/header/*) ON the ISO so the install is
+# local-first and does not depend on GitHub for branding. Fail the build if the
+# manifest and branding/ disagree or the header files are missing.
+bash "$REPO_DIR/scripts/dev/check-manifest.sh"
+test -s "$REPO_DIR/branding/header/top-header.css" && test -s "$REPO_DIR/branding/header/top-header.js"
+rm -rf "$WORK_DIR/source-files/vizoure/repo"
+mkdir -p "$WORK_DIR/source-files/vizoure/repo"
+cp -r "$REPO_DIR/scripts" "$REPO_DIR/branding" "$WORK_DIR/source-files/vizoure/repo/"
+rm -rf "$WORK_DIR/source-files/vizoure/repo/scripts/dev"
 touch "$WORK_DIR/source-files/vizoure/meta-data"
 
 echo "[3/4] Customizing boot menu..."
