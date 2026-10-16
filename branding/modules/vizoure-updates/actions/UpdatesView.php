@@ -19,6 +19,12 @@ class UpdatesView extends UpdatesBase {
 	protected function doAction(): void {
 		$state = $this->state();
 		$installed = $state['installed'] ?? null;
+
+		if ($installed === null) {
+			// no status report yet (fresh install): read the one place the version is recorded
+			$v = trim((string) @file_get_contents('/etc/vizoure/version', false, null, 0, 64));
+			$installed = preg_match('/^v\d+\.\d+\.\d+-vz\d+$/', $v) ? $v : null;
+		}
 		$channel = $state['channel'] ?? 'stable';
 
 		// Releases newer than installed that are visible on the chosen channel, newest first.

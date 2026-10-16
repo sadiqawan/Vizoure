@@ -739,6 +739,8 @@ systemctl daemon-reload
 systemctl enable vizoure-updater.path vizoure-updater-check.timer >/dev/null 2>&1
 # start (never restart: this script may be running inside vizoure-updater.service itself)
 systemctl start vizoure-updater.path vizoure-updater-check.timer
+# first status report right away (the page would otherwise say "unknown" until the timer fires); never fatal
+systemctl start --no-block vizoure-updater-check.service || true
 rm -rf "$VZ_STAGE"
 echo "  Vizoure updater installed"
 
