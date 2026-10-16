@@ -79,6 +79,40 @@ KEEP_CACHED_RELEASES = 3
 ALLOWED_DOWNLOAD_HOSTS = ('github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com')
 REDACT_RE = re.compile(r'pass(word|wd)?|secret|token', re.I)
 
+# Customer-visible log wording. Real technical names (packages, executables, paths, repository hosts) are replaced by
+# NEUTRAL descriptions - never by a lookalike such as "vizoure-server", which would be a command/package that does not
+# exist. The unfiltered output stays root-only in run/<id>/log.raw.txt.
+_PKG_WORDS = (
+    ('server-mysql', 'core server package'), ('server-pgsql', 'core server package'), ('server', 'core server package'),
+    ('frontend-php', 'core web package'), ('apache-conf', 'core web configuration package'),
+    ('nginx-conf', 'core web configuration package'), ('sql-scripts', 'core database scripts package'),
+    ('agent2', 'core agent package'), ('agent', 'core agent package'), ('release', 'core repository package'),
+    ('proxy-mysql', 'core proxy package'), ('web-service', 'core web service package'),
+)
+_UPSTREAM_RULES = [
+    (re.compile(r'https?://[^\s]*zabbix[^\s]*', re.I), 'the package repository'),
+    (re.compile(r'(?:/[\w.+-]+)*/zabbix[\w./+-]*', re.I), 'core files'),
+    (re.compile(r'\bzabbix_[a-z0-9_]+\b', re.I), 'core component'),   # executables: zabbix_server, zabbix_agentd ...
+    (re.compile(r'\bzabbix-([a-z0-9]+(?:-[a-z0-9]+)*)\b', re.I), None),   # packages: handled by _pkg_repl
+    (re.compile(r'\bzabbix\b', re.I), 'Vizoure NMS core'),
+]
+
+
+def _pkg_repl(m):
+    rest = m.group(1).lower()
+    for key, words in _PKG_WORDS:
+        if rest == key or rest.startswith(key):
+            return words
+    return 'core component'
+
+
+def customer_text(line):
+    """Descriptive rewrite for the page: no upstream product name, no invented technical names."""
+    out = line
+    for rx, repl in _UPSTREAM_RULES:
+        out = rx.sub(_pkg_repl, out) if repl is None else rx.sub(repl, out)
+    return out
+
 
 # ----------------------------------------------------------------------------------------------
 # small helpers
@@ -527,7 +561,7 @@ class Run:
         self.rawf.write(line + '\n')
         self.rawf.flush()
         # customer-visible log: no upstream product names, no credential-looking lines
-        self.logf.write(re.sub(r'(?i)zabbix', 'vizoure', redact_line(line)) + '\n')
+        self.logf.write(customer_text(redact_line(line)) + '\n')
         self.logf.flush()
 
     def set(self, state, step):

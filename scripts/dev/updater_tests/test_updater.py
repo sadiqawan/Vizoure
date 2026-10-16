@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -316,6 +317,32 @@ class Rejections(unittest.TestCase):
         raw = open(os.path.join(run.dir, 'log.raw.txt')).read()
         self.assertNotIn('zabbix', shown.lower())
         self.assertIn('zabbix', raw)
+
+
+class CustomerText(unittest.TestCase):
+    """The customer-visible log must never contain the upstream name NOR invent names that do not exist."""
+
+    CASES = [
+        ('Setting up zabbix-server-mysql (1:7.4.15-1+ubuntu24.04) ...', 'core server package'),
+        ('apt install -y zabbix-server-mysql zabbix-frontend-php zabbix-agent', 'core web package'),
+        ('Unpacking zabbix-sql-scripts (1:7.4.15) over (1:7.4.14) ...', 'core database scripts package'),
+        ('Get:1 https://repo.zabbix.com/zabbix/7.4/ubuntu noble/main amd64 zabbix-agent', 'the package repository'),
+        ('Restarting /usr/share/zabbix/ui and /etc/zabbix/zabbix_server.conf', 'core files'),
+        ('started zabbix_server (pid 12)', 'core component'),
+        ('Upgrading Zabbix frontend', 'Vizoure NMS core frontend'),
+    ]
+
+    def test_no_upstream_name_and_no_lookalikes(self):
+        for raw, expect in self.CASES:
+            shown = vzu.customer_text(raw)
+            self.assertNotIn('zabbix', shown.lower(), raw)
+            self.assertIn(expect, shown, raw)
+            # never an invented vizoure-* package/service/command (vizoure itself as a command or db name is real)
+            self.assertIsNone(re.search(r'vizoure[-_](server|agent|frontend|sql|apache|release|proxy)', shown, re.I), shown)
+
+    def test_plain_lines_untouched(self):
+        for line in ('[3/6] Stopping services...', '  Backup saved to: /var/backups/vizoure/x.sql.gz', '== Verifying signature'):
+            self.assertEqual(vzu.customer_text(line), line)
 
 
 if __name__ == '__main__':
