@@ -71,7 +71,7 @@ $js_data = json_encode([
 		return e;
 	}
 
-	/* ---------- times: server/Zabbix-user time zone is shown by PHP; add the browser's if it differs ---------- */
+	/* ---------- times: the user's configured time zone is shown by PHP; add the browser's if it differs ---------- */
 	document.querySelectorAll('.js-vz-time').forEach((t) => {
 		const ts = parseInt(t.dataset.ts, 10);
 		const zbx_offset = parseInt(t.dataset.offset, 10);

@@ -58,6 +58,7 @@ targets() {
 
 act() {
     local verb="$1" order="$2" target="${3:-all}" rc=0 t
+    case "$target" in all|server|agent|web|db) ;; *) echo "Unknown target: $target (use server, agent, web, db or all)" >&2; exit 2 ;; esac
     need_root "$verb" "$target"
     for t in $(targets "$target" "$order"); do
         printf '%-20s %s ... ' "$(label "$t")" "$verb"
