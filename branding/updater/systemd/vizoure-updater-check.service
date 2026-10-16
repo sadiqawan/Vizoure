@@ -1,0 +1,12 @@
+[Unit]
+Description=Vizoure NMS updater: check GitHub for new releases
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 -I /usr/local/lib/vizoure-updater/vizoure-updater.py --check
+TimeoutStartSec=5min
+PrivateTmp=true
+ProtectHome=true

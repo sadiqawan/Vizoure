@@ -1,0 +1,16 @@
+[Unit]
+Description=Vizoure NMS updater (processes upgrade requests from the web UI)
+Documentation=https://github.com/sadiqawan/Vizoure
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 -I /usr/local/lib/vizoure-updater/vizoure-updater.py --process
+# Runs even when the service is killed midway: marks the run "interrupted" and fills in recovery steps.
+ExecStopPost=/usr/bin/python3 -I /usr/local/lib/vizoure-updater/vizoure-updater.py --reconcile
+TimeoutStartSec=3h
+KillMode=control-group
+PrivateTmp=true
+ProtectHome=true

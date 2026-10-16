@@ -1,0 +1,39 @@
+{
+	"manifest_version": 2.0,
+	"id": "vizoure.updates",
+	"type": "module",
+	"name": "Vizoure updates",
+	"namespace": "VizoureUpdates",
+	"version": "1.0",
+	"author": "Vizoure",
+	"description": "Shows new Vizoure NMS releases and upgrades the installation through the root updater service (Super admin only).",
+	"actions": {
+		"vizoure.updates.view": {
+			"class": "UpdatesView",
+			"view": "updates.view"
+		},
+		"vizoure.updates.status": {
+			"class": "UpdatesStatus",
+			"layout": "layout.json"
+		},
+		"vizoure.updates.check": {
+			"class": "UpdatesCheck",
+			"layout": "layout.json"
+		},
+		"vizoure.updates.upgrade": {
+			"class": "UpdatesUpgrade",
+			"layout": "layout.json"
+		},
+		"vizoure.updates.upload": {
+			"class": "UpdatesUpload",
+			"layout": "layout.json"
+		},
+		"vizoure.updates.config": {
+			"class": "UpdatesConfig",
+			"layout": "layout.json"
+		}
+	},
+	"assets": {
+		"css": ["vizoure-updates.css"]
+	}
+}

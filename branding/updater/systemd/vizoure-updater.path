@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch for Vizoure NMS upgrade requests written by the web UI
+
+[Path]
+# The web UI (www-data) can only create files in this directory; the root service validates them.
+PathExistsGlob=/var/spool/vizoure-updater/requests/*.json
+Unit=vizoure-updater.service
+
+[Install]
+WantedBy=multi-user.target

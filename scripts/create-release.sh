@@ -2,15 +2,22 @@
 set -eo pipefail
 
 # ─────────────────────────────────────────────
-# Vizoure NMS — GitHub Release Creator
-# Usage: GITHUB_TOKEN=xxx bash create-release.sh [version]
-# Example: GITHUB_TOKEN=ghp_xxx bash create-release.sh 7.4.9
+# Vizoure NMS — GitHub Release Creator (publishes what the in-UI updater consumes; see md/09-update-system.md)
+#
+# Usage: GITHUB_TOKEN=xxx [PRERELEASE=1] [RELEASE_TYPE=full|branding-only] bash create-release.sh
+#
+# The release tag comes from branding/VERSION (vX.Y.Z-vzN). PRERELEASE=1 publishes a TEST pre-release
+# (channel "test"; customers on the default "stable" channel never see it).
+# Assets: vizoure-nms-<tag>-install.tar.gz, SHA256SUMS, SHA256SUMS.sig (signed via ssh-agent: the script
+# stops with exit 3 if the signing key is not loaded), release.json, plus the Linux agent .deb.
 # ─────────────────────────────────────────────
 
-VERSION="${1:-7.4.9}"
-REPO="sadiqawan/Vizoure"
-TAG="v${VERSION}"
 BUILD_DIR="/root/vizoure-nms-builde"
+TAG="$(tr -d '[:space:]' < "${BUILD_DIR}/branding/VERSION")"
+echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-vz[0-9]+$' || { echo "ERROR: branding/VERSION ('$TAG') is not vX.Y.Z-vzN"; exit 1; }
+VERSION="$(echo "$TAG" | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)-vz[0-9]+$//')"
+REPO="sadiqawan/Vizoure"
+if [ "${PRERELEASE:-0}" = "1" ]; then CHANNEL="test"; PRERELEASE_JSON="true"; else CHANNEL="stable"; PRERELEASE_JSON="false"; fi
 PACKAGES_DIR="${BUILD_DIR}/packages/linux"
 DEB_FILE="${PACKAGES_DIR}/vizoure-agent_${VERSION}_amd64.deb"
 
@@ -58,27 +65,15 @@ echo "  Prerequisites OK"
 # ─────────────────────────────────────────────
 echo "[2/4] Preparing release assets..."
 
-RELEASE_DIR="/tmp/vizoure-release-${VERSION}"
+RELEASE_DIR="/tmp/vizoure-release-${TAG}"
 rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR"
 
+# Signed install tarball + SHA256SUMS(.sig) + release.json (exit 3 = signing key not in ssh-agent).
+bash "${BUILD_DIR}/scripts/make-release-assets.sh" "$RELEASE_DIR" --type "${RELEASE_TYPE:-full}" --channel "$CHANNEL" --sign
+
 cp "$DEB_FILE" "$RELEASE_DIR/"
-cp "${BUILD_DIR}/scripts/install-nms.sh" "$RELEASE_DIR/vizoure-install-${VERSION}.sh"
-cp "${BUILD_DIR}/scripts/upgrade.sh" "$RELEASE_DIR/vizoure-upgrade-${VERSION}.sh"
-
-# Install tarball: scripts/ + branding/ (incl. branding/header/*) so a release can be
-# installed local-first without reaching GitHub for branding assets.
-bash "${BUILD_DIR}/scripts/dev/check-manifest.sh"
-test -s "${BUILD_DIR}/branding/header/top-header.css" && test -s "${BUILD_DIR}/branding/header/top-header.js"
-TARDIR="vizoure-nms-${VERSION}"
-rm -rf "/tmp/${TARDIR}" && mkdir -p "/tmp/${TARDIR}"
-cp -r "${BUILD_DIR}/scripts" "${BUILD_DIR}/branding" "/tmp/${TARDIR}/"
-rm -rf "/tmp/${TARDIR}/scripts/dev"
-tar -C /tmp -czf "$RELEASE_DIR/${TARDIR}-install.tar.gz" "${TARDIR}"
-tar -tzf "$RELEASE_DIR/${TARDIR}-install.tar.gz" | grep -q "branding/header/top-header.css"
-
-cd "$RELEASE_DIR"
-sha256sum * > SHA256SUMS.txt
+( cd "$RELEASE_DIR" && sha256sum "$(basename "$DEB_FILE")" > SHA256SUMS.agent.txt )
 
 echo "  Assets prepared:"
 ls -lh "$RELEASE_DIR"
@@ -93,6 +88,11 @@ EXISTING=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
     "https://api.github.com/repos/${REPO}/releases/tags/${TAG}" | \
     python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('id',''))" 2>/dev/null)
 
+if [ -n "$EXISTING" ] && [ "$PRERELEASE_JSON" = "false" ] && [ "${FORCE:-0}" != "1" ]; then
+    echo "ERROR: a release for ${TAG} already exists; installs are pinned to this tag. Bump branding/VERSION or set FORCE=1."
+    exit 1
+fi
+
 if [ -n "$EXISTING" ]; then
     echo "  Deleting existing release ${TAG}..."
     curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
@@ -103,9 +103,16 @@ fi
 git -C "${BUILD_DIR}" tag -d "$TAG" 2>/dev/null || true
 git -C "${BUILD_DIR}" push origin ":refs/tags/$TAG" 2>/dev/null || true
 
-RELEASE_BODY="# Vizoure NMS ${VERSION}
+# Release notes: the "## <tag>" section of CHANGELOG.md (shown in the in-UI updater).
+NOTES="$(awk -v t="## ${TAG}" '$0==t{f=1;next} /^## /{f=0} f' "${BUILD_DIR}/CHANGELOG.md")"
+[ -n "$NOTES" ] || NOTES="No release notes were written for this version."
 
-Vizoure NMS is a fully rebranded network monitoring system based on Zabbix ${VERSION}.
+RELEASE_BODY="# Vizoure NMS ${TAG}
+
+${NOTES}
+
+Vizoure NMS is a rebranded network monitoring system based on Zabbix ${VERSION}.
+Channel: **${CHANNEL}**.
 
 ## Quick Install
 
@@ -123,7 +130,7 @@ sudo dpkg -i vizoure-agent_${VERSION}_amd64.deb
 
 ## Offline / local-first install
 
-Download \`vizoure-nms-${VERSION}-install.tar.gz\`, extract it and run \`sudo bash vizoure-nms-${VERSION}/scripts/install-nms.sh\` — branding (including the top header) is taken from the extracted copy.
+Download \`vizoure-nms-${TAG}-install.tar.gz\`, extract it and run \`sudo bash vizoure-nms-${TAG}/scripts/install-nms.sh\` — branding (including the top header) is taken from the extracted copy.
 
 ## Default Credentials
 - **Web UI:** \`http://<server-ip>/vizoure\`
@@ -140,7 +147,7 @@ RELEASE_RESPONSE=$(curl -s -X POST \
     -H "Authorization: token $GITHUB_TOKEN" \
     -H "Content-Type: application/json" \
     "https://api.github.com/repos/${REPO}/releases" \
-    -d "{\"tag_name\":\"${TAG}\",\"name\":\"Vizoure NMS ${VERSION}\",\"body\":$(echo "$RELEASE_BODY" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),\"draft\":false,\"prerelease\":false}")
+    -d "{\"tag_name\":\"${TAG}\",\"name\":\"Vizoure NMS ${TAG}\",\"body\":$(echo "$RELEASE_BODY" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),\"draft\":false,\"prerelease\":${PRERELEASE_JSON}}")
 
 RELEASE_ID=$(echo "$RELEASE_RESPONSE" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('id','ERROR:'+str(r.get('message',''))))" 2>/dev/null)
 

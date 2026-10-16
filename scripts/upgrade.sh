@@ -3,14 +3,16 @@ set -eo pipefail
 
 # ─────────────────────────────────────────────
 # Vizoure NMS — Upgrade Script
-# Usage: sudo bash upgrade.sh [new_version]
+# Usage: sudo bash upgrade.sh <new_zabbix_version> [--branding-only]
 # Example: sudo bash upgrade.sh 7.4.12
+#   --branding-only  Vizoure-only release: skip the Zabbix package/DB steps, reapply branding only
+#                    (the web updater passes it only when the signed release.json allows it).
 # ─────────────────────────────────────────────
 
 # ISS-10 fix (md/04): no automatic rollback exists — this at least stops the
 # script from leaving a silent, undiagnosed partial state (e.g. services left
 # stopped). See README.md's "Recovery" section for the manual restore steps.
-trap 'echo "ERROR: upgrade.sh failed at line $LINENO. A pre-upgrade backup should exist at ${BACKUP_FILE:-/tmp/vizoure-db-backup-*.sql.gz} — see README.md Recovery section before retrying." >&2' ERR
+trap 'echo "ERROR: upgrade.sh failed at line $LINENO. A pre-upgrade backup should exist at ${BACKUP_FILE:-/var/backups/vizoure/vizoure-db-backup-*.sql.gz} — see README.md Recovery section before retrying." >&2' ERR
 
 # Rule B / ISS-30 fix (md/04): same local-first logic as install-nms.sh.
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" 2>/dev/null && pwd || echo "")"
@@ -29,14 +31,22 @@ REPO_RAW="https://raw.githubusercontent.com/sadiqawan/Vizoure/${VIZOURE_REF}"
 DB_NAME="vizoure"
 DB_USER="vizoure"
 DB_PASSWORD="AES@admin"
-NEW_VERSION="${1:-}"
+NEW_VERSION=""
+BRANDING_ONLY=false
+for ARG in "$@"; do
+    case "$ARG" in
+        --branding-only) BRANDING_ONLY=true ;;
+        -*) echo "Unknown option: $ARG"; exit 1 ;;
+        *) [ -z "$NEW_VERSION" ] && NEW_VERSION="$ARG" ;;
+    esac
+done
 
 echo "========================================="
 echo "  Vizoure NMS Upgrade"
 echo "========================================="
 
 if [ -z "$NEW_VERSION" ]; then
-    echo "Usage: sudo bash upgrade.sh <new_version>"
+    echo "Usage: sudo bash upgrade.sh <new_version> [--branding-only]"
     echo "Example: sudo bash upgrade.sh 7.4.12"
     exit 1
 fi
@@ -56,60 +66,86 @@ echo "  Target version:  ${NEW_VERSION}"
 # 2. BACKUP DATABASE
 # ─────────────────────────────────────────────
 echo "[2/6] Backing up database..."
-BACKUP_FILE="/tmp/vizoure-db-backup-$(date +%Y%m%d-%H%M%S).sql.gz"
-mysqldump -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME} | gzip > "$BACKUP_FILE"
+BACKUP_DIR="/var/backups/vizoure"
+install -d -m 0700 "$BACKUP_DIR"
+BACKUP_FILE="${BACKUP_DIR}/vizoure-db-backup-$(date +%Y%m%d-%H%M%S).sql.gz"
+# Abort cleanly BEFORE touching anything if the backup would not fit: estimate the dump from the
+# database itself (data + index bytes) and require that plus 512 MB of free space.
+DB_BYTES="$(mysql -uroot -N -e "SELECT COALESCE(SUM(data_length+index_length),0) FROM information_schema.tables WHERE table_schema='${DB_NAME}'")"
+FREE_BYTES="$(df --output=avail -B1 "$BACKUP_DIR" | tail -1 | tr -d ' ')"
+NEED_BYTES=$(( ${DB_BYTES:-0} + 536870912 ))
+if [ "$FREE_BYTES" -lt "$NEED_BYTES" ]; then
+    echo "ERROR: not enough free disk space for the database backup in ${BACKUP_DIR}."
+    echo "       Free: $(( FREE_BYTES / 1048576 )) MB, needed: about $(( NEED_BYTES / 1048576 )) MB. Nothing was changed."
+    exit 1
+fi
+if ! mysqldump -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME} | gzip > "$BACKUP_FILE" || ! gzip -t "$BACKUP_FILE"; then
+    rm -f "$BACKUP_FILE"
+    echo "ERROR: the database backup failed; nothing was changed."
+    exit 1
+fi
+chmod 0600 "$BACKUP_FILE"
+# keep the 5 most recent backups
+ls -1t "${BACKUP_DIR}"/vizoure-db-backup-*.sql.gz 2>/dev/null | tail -n +6 | xargs -r rm -f --
 echo "  Backup saved to: $BACKUP_FILE"
+echo "VIZOURE_BACKUP_FILE=$BACKUP_FILE"
 
-# ─────────────────────────────────────────────
-# 3. STOP SERVICES
-# ─────────────────────────────────────────────
-echo "[3/6] Stopping services..."
-systemctl stop zabbix-server zabbix-agent 2>/dev/null || true
+if [ "$BRANDING_ONLY" = true ]; then
+    echo "[3/6] Skipped (Vizoure-only release: Zabbix packages unchanged)"
+    echo "[4/6] Skipped"
+    echo "[5/6] Skipped"
+else
+    # ─────────────────────────────────────────────
+    # 3. STOP SERVICES
+    # ─────────────────────────────────────────────
+    echo "[3/6] Stopping services..."
+    systemctl stop zabbix-server zabbix-agent 2>/dev/null || true
 
-# ─────────────────────────────────────────────
-# 4. UPDATE ZABBIX PACKAGES
-# ─────────────────────────────────────────────
-echo "[4/6] Updating Zabbix packages..."
-ZABBIX_VERSION=$(echo "$NEW_VERSION" | cut -d. -f1-2)
+    # ─────────────────────────────────────────────
+    # 4. UPDATE ZABBIX PACKAGES
+    # ─────────────────────────────────────────────
+    echo "[4/6] Updating Zabbix packages..."
+    ZABBIX_VERSION=$(echo "$NEW_VERSION" | cut -d. -f1-2)
 
-wget -q "https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_${ZABBIX_VERSION}+ubuntu24.04_all.deb" \
-    -O /tmp/zabbix-release-new.deb
-dpkg -i /tmp/zabbix-release-new.deb
-apt update -y -q
+    wget -q "https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_${ZABBIX_VERSION}+ubuntu24.04_all.deb" \
+        -O /tmp/zabbix-release-new.deb
+    dpkg -i /tmp/zabbix-release-new.deb
+    apt update -y -q
 
-apt install -y \
-    zabbix-server-mysql \
-    zabbix-frontend-php \
-    zabbix-apache-conf \
-    zabbix-sql-scripts \
-    zabbix-agent
+    apt install -y \
+        zabbix-server-mysql \
+        zabbix-frontend-php \
+        zabbix-apache-conf \
+        zabbix-sql-scripts \
+        zabbix-agent
 
-# Force reinstall to ensure files are properly unpacked
-apt install --reinstall -y zabbix-sql-scripts -q
-apt install --reinstall -y zabbix-frontend-php -q
+    # Force reinstall to ensure files are properly unpacked
+    apt install --reinstall -y zabbix-sql-scripts -q
+    apt install --reinstall -y zabbix-frontend-php -q
 
-echo "  Packages updated to ${NEW_VERSION}"
+    echo "  Packages updated to ${NEW_VERSION}"
 
-# ─────────────────────────────────────────────
-# 5. RUN DB UPGRADE + REBRANDING
-# ─────────────────────────────────────────────
-echo "[5/6] Upgrading database schema..."
+    # ─────────────────────────────────────────────
+    # 5. RUN DB UPGRADE + REBRANDING
+    # ─────────────────────────────────────────────
+    echo "[5/6] Upgrading database schema..."
 
-# Zabbix handles schema upgrades automatically on server start
-# But we need to reapply branding to any new DB entries
+    # Zabbix handles schema upgrades automatically on server start
+    # But we need to reapply branding to any new DB entries
 
-systemctl start zabbix-server
-sleep 10  # Wait for schema upgrade to complete
+    systemctl start zabbix-server
+    sleep 10  # Wait for schema upgrade to complete
 
-echo "  Reapplying database branding..."
-mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%' AND status=3;"
-mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET vendor_name = 'Vizoure' WHERE vendor_name = 'Zabbix' AND status=3;"
-mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET host = REPLACE(host, 'Zabbix', 'Vizoure') WHERE host LIKE '%Zabbix%' AND status=3;"
-mysql -uroot -e "UPDATE ${DB_NAME}.triggers SET description = REPLACE(description, 'Zabbix', 'Vizoure') WHERE description LIKE '%Zabbix%';"
-mysql -uroot -e "UPDATE ${DB_NAME}.items SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
-mysql -uroot -e "UPDATE ${DB_NAME}.actions SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
-mysql -uroot -e "UPDATE ${DB_NAME}.images SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
-echo "  Database branding updated"
+    echo "  Reapplying database branding..."
+    mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%' AND status=3;"
+    mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET vendor_name = 'Vizoure' WHERE vendor_name = 'Zabbix' AND status=3;"
+    mysql -uroot -e "UPDATE ${DB_NAME}.hosts SET host = REPLACE(host, 'Zabbix', 'Vizoure') WHERE host LIKE '%Zabbix%' AND status=3;"
+    mysql -uroot -e "UPDATE ${DB_NAME}.triggers SET description = REPLACE(description, 'Zabbix', 'Vizoure') WHERE description LIKE '%Zabbix%';"
+    mysql -uroot -e "UPDATE ${DB_NAME}.items SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
+    mysql -uroot -e "UPDATE ${DB_NAME}.actions SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
+    mysql -uroot -e "UPDATE ${DB_NAME}.images SET name = REPLACE(name, 'Zabbix', 'Vizoure') WHERE name LIKE '%Zabbix%';"
+    echo "  Database branding updated"
+fi
 
 # ─────────────────────────────────────────────
 # 6. REAPPLY UI BRANDING
@@ -139,10 +175,28 @@ fi
 chmod +x /tmp/vizoure-branding/apply-branding.sh
 bash /tmp/vizoure-branding/apply-branding.sh
 
-systemctl restart zabbix-server zabbix-agent apache2
-systemctl enable zabbix-server zabbix-agent apache2
+if [ "$BRANDING_ONLY" = true ]; then
+    # Zabbix itself was not touched: do not restart monitoring, only the web server.
+    systemctl restart apache2
+else
+    systemctl restart zabbix-server zabbix-agent apache2
+    systemctl enable zabbix-server zabbix-agent apache2
+fi
 
 echo ""
+# Record the installed release in ONE place (/etc/vizoure/version), only after everything succeeded.
+# The updater reads this file; the value comes from branding/VERSION of the package that was installed.
+if [ -s /tmp/vizoure-branding/VERSION ]; then
+    install -d -m 0755 /etc/vizoure
+    tr -d '[:space:]' < /tmp/vizoure-branding/VERSION > /etc/vizoure/.version.new
+    echo >> /etc/vizoure/.version.new
+    chmod 0644 /etc/vizoure/.version.new
+    mv -f /etc/vizoure/.version.new /etc/vizoure/version
+    echo "  Installed release recorded: $(cat /etc/vizoure/version)"
+else
+    echo "  WARNING: no VERSION file in the branding package; /etc/vizoure/version not updated"
+fi
+
 echo "========================================="
 echo "  Vizoure NMS Upgrade Complete!"
 echo "========================================="

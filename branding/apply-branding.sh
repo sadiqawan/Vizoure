@@ -429,15 +429,14 @@ fetch_local_or_github "$BRANDING_LOCAL_DIR/header/top-header.js" \
 # (re)written if missing or not yet carrying the marker, so a re-run doesn't
 # need to touch it once it's current.
 TOPHEADER_PHP="$UI/app/partials/layout.htmlpage.topheader.php"
-# V2 marker (ISS-32): the partial changed shape (search collapsed into an icon
-# toggle, server-name no longer rendered), so a file carrying only the old V1
-# marker is rewritten.
-if [ -f "$TOPHEADER_PHP" ] && grep -q "VIZOURE_TOPHEADER_PARTIAL_V2" "$TOPHEADER_PHP"; then
+# V3 marker: the partial gained the Super-admin "update available" badge (ISS-36),
+# so a file carrying an older marker is rewritten.
+if [ -f "$TOPHEADER_PHP" ] && grep -q "VIZOURE_TOPHEADER_PARTIAL_V3" "$TOPHEADER_PHP"; then
     echo "  layout.htmlpage.topheader.php already present — skipping"
 else
     cat > "$TOPHEADER_PHP" << 'TOPHEADEREOF'
 <?php
-/* VIZOURE_TOPHEADER_PARTIAL_V2 — horizontal top header, replaces the sidebar.
+/* VIZOURE_TOPHEADER_PARTIAL_V3 — horizontal top header, replaces the sidebar.
  * Reuses the exact same menu.main / menu.user components as the stock
  * sidebar (CMenuHelper::getMainMenu()/getUserMenu(), registered once in
  * ZBase.php) — role filtering and active-page selection are inherited
@@ -481,6 +480,26 @@ $search_toggle = (new CButtonIcon(ZBX_ICON_SEARCH, _('Search')))
 	->setAttribute('aria-label', _('Search'))
 	->setAttribute('aria-expanded', 'false');
 
+// "Update available" badge (ISS-36): Super admin only. Reads the status file the ROOT updater writes;
+// the web side never talks to GitHub.
+$updates_badge = null;
+
+if ((int) (CWebUser::$data['type'] ?? 0) === USER_TYPE_SUPER_ADMIN) {
+	$vz_state = json_decode((string) @file_get_contents('/var/lib/vizoure-updater/state.json', false, null, 0,
+		2097152), true
+	);
+	$vz_version = is_array($vz_state) ? (string) ($vz_state['update_available']['version'] ?? '') : '';
+
+	if (preg_match('/^v\d+\.\d+\.\d+-vz\d+$/', $vz_version)) {
+		$updates_badge = (new CLink(_('Updates'),
+			(new CUrl('vizoure.php'))->setArgument('action', 'vizoure.updates.view')
+		))
+			->addClass('vz-updates-badge')
+			->setAttribute('title', _s('Update available: %1$s', $vz_version))
+			->setAttribute('aria-label', _s('Update available: %1$s', $vz_version));
+	}
+}
+
 $hamburger = (new CTag('button', true, (new CTag('span', true))))
 	->addClass('vz-hamburger')
 	->setAttribute('type', 'button')
@@ -499,6 +518,7 @@ $hamburger = (new CTag('button', true, (new CTag('span', true))))
 			->setAttribute('role', 'navigation')
 			->setAttribute('aria-label', _('Main navigation')),
 		(new CDiv([
+			$updates_badge,
 			(new CDiv([$search_toggle, $search_form]))->addClass('vz-search'),
 			(new CTag('nav', true, APP::Component()->get('menu.user')->addClass('menu-user')))
 				->addClass('vz-header-user')
@@ -647,6 +667,80 @@ append_theme_css "$UI/assets/styles/hc-light.css" '
 .vizoure-top-header .vz-hamburger { color: #ffffff; }'
 
 echo "  Top header installed"
+
+# ─────────────────────────────────────────────
+# 15. VIZOURE UPDATER + "Vizoure updates" MODULE (ISS-36)
+# ─────────────────────────────────────────────
+# The web UI (www-data) only writes upgrade REQUESTS into a spool directory; a root systemd
+# service (vizoure-updater) validates and performs them. See md/09-update-system.md.
+echo "[15/15] Installing the Vizoure updater and the updates module..."
+
+command -v ssh-keygen >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 \
+    || apt-get install -y -q openssh-client python3
+
+VZ_STAGE="$(mktemp -d)"
+if [ -f "$BRANDING_LOCAL_DIR/MANIFEST" ]; then
+    VZ_MANIFEST="$BRANDING_LOCAL_DIR/MANIFEST"
+else
+    curl -fsSL "${REPO_RAW}/branding/MANIFEST" -o "$VZ_STAGE/MANIFEST"
+    VZ_MANIFEST="$VZ_STAGE/MANIFEST"
+fi
+while IFS= read -r VZ_F; do
+    case "$VZ_F" in updater/*|modules/*) ;; *) continue ;; esac
+    mkdir -p "$VZ_STAGE/$(dirname "$VZ_F")"
+    fetch_local_or_github "$BRANDING_LOCAL_DIR/$VZ_F" "branding/$VZ_F" "$VZ_STAGE/$VZ_F"
+done < "$VZ_MANIFEST"
+for VZ_NEED in updater/vizoure-updater.py updater/allowed_signers modules/vizoure-updates/manifest.json \
+        modules/vizoure-updates/Module.php modules/vizoure-updates/actions/UpdatesBase.php; do
+    [ -s "$VZ_STAGE/$VZ_NEED" ] || [ "$VZ_NEED" = "updater/allowed_signers" ] || {
+        echo "ERROR: $VZ_NEED missing from branding/ (incomplete release package); updates module not installed"
+        exit 1
+    }
+done
+
+# --- frontend module (clean replace, so removed files never linger) ---
+rm -rf "$UI/modules/vizoure-updates"
+mkdir -p "$UI/modules"
+cp -r "$VZ_STAGE/modules/vizoure-updates" "$UI/modules/vizoure-updates"
+chown -R root:root "$UI/modules/vizoure-updates"
+find "$UI/modules/vizoure-updates" -type d -exec chmod 755 {} +
+find "$UI/modules/vizoure-updates" -type f -exec chmod 644 {} +
+
+# --- register the module in Zabbix (idempotent; Zabbix reads enabled modules from the `module` table) ---
+VZ_DB="vizoure"
+VZ_MODID="$(mysql -uroot -N -e "SELECT moduleid FROM ${VZ_DB}.module WHERE id='vizoure.updates'" 2>/dev/null || true)"
+if [ -z "$VZ_MODID" ]; then
+    VZ_NEXT="$(mysql -uroot -N -e "SELECT COALESCE(MAX(moduleid),0)+1 FROM ${VZ_DB}.module")"
+    mysql -uroot -e "INSERT INTO ${VZ_DB}.module (moduleid,id,relative_path,status,config) VALUES (${VZ_NEXT},'vizoure.updates','modules/vizoure-updates',1,'[]')"
+    echo "  module registered (moduleid ${VZ_NEXT})"
+else
+    mysql -uroot -e "UPDATE ${VZ_DB}.module SET relative_path='modules/vizoure-updates', status=1 WHERE id='vizoure.updates'"
+    echo "  module already registered (moduleid ${VZ_MODID}) - ensured enabled"
+fi
+
+# --- root updater service ---
+install -d -m 0755 /usr/local/lib/vizoure-updater /etc/vizoure /var/lib/vizoure-updater /var/lib/vizoure-updater/run \
+    /var/spool/vizoure-updater
+install -d -m 0700 /var/backups/vizoure
+# www-data may CREATE files here but not list/read them; the root service treats every file as hostile.
+install -d -o root -g www-data -m 0730 /var/spool/vizoure-updater/requests /var/spool/vizoure-updater/uploads
+
+# atomic replace (new inode): safe even if the updater is the process running this very script
+install -m 0755 "$VZ_STAGE/updater/vizoure-updater.py" /usr/local/lib/vizoure-updater/.vizoure-updater.py.new
+mv -f /usr/local/lib/vizoure-updater/.vizoure-updater.py.new /usr/local/lib/vizoure-updater/vizoure-updater.py
+install -m 0644 "$VZ_STAGE/updater/allowed_signers" /etc/vizoure/.allowed_signers.new
+mv -f /etc/vizoure/.allowed_signers.new /etc/vizoure/allowed_signers
+[ -f /etc/vizoure/updater.conf ] || install -m 0644 "$VZ_STAGE/updater/updater.conf" /etc/vizoure/updater.conf
+
+for VZ_UNIT in vizoure-updater.service vizoure-updater.path vizoure-updater-check.service vizoure-updater-check.timer; do
+    install -m 0644 "$VZ_STAGE/updater/systemd/$VZ_UNIT" "/etc/systemd/system/$VZ_UNIT"
+done
+systemctl daemon-reload
+systemctl enable vizoure-updater.path vizoure-updater-check.timer >/dev/null 2>&1
+# start (never restart: this script may be running inside vizoure-updater.service itself)
+systemctl start vizoure-updater.path vizoure-updater-check.timer
+rm -rf "$VZ_STAGE"
+echo "  Vizoure updater installed"
 
 echo "[11/11] Restarting Apache..."
 systemctl restart apache2

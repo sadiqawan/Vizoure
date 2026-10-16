@@ -374,6 +374,39 @@ body {
 	height: 24px;
 }
 
+/* "Update available" badge (Super admin only, rendered by the partial when the root updater reports one). */
+.vizoure-top-header .vz-updates-badge {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 100%;
+	font-size: 0; /* label is text for screen readers/tooltip only */
+	color: inherit;
+}
+
+.vizoure-top-header .vz-updates-badge::before {
+	content: '';
+	width: 7px;
+	height: 7px;
+	border: solid currentColor;
+	border-width: 2px 0 0 2px;
+	transform: translateY(2px) rotate(45deg);
+}
+
+.vizoure-top-header .vz-updates-badge::after {
+	content: '';
+	position: absolute;
+	top: 11px;
+	right: 7px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: #e6a100;
+	box-shadow: 0 0 0 2px rgba(0, 0, 0, .25);
+}
+
 /* ---- Hamburger (collapsed) mode, <1024px ---- */
 
 .vizoure-top-header .vz-hamburger {

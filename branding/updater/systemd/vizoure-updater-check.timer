@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for Vizoure NMS releases every 6 hours
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=6h
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

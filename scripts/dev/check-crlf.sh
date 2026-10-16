@@ -1,5 +1,5 @@
 #!/bin/bash
-# Fails if any .sh/.php/.css/.js/.conf file in the repo contains a CR (\r)
+# Fails if any .sh/.php/.css/.js/.conf/.py/.json/systemd-unit/MANIFEST/VERSION file in the repo contains a CR (\r)
 # byte. Written after this session hit the same CRLF-corruption bug twice
 # via the Windows-side editing tooling, despite .gitattributes being in
 # place. Run this before every copy to the VM and before every commit —
@@ -25,7 +25,7 @@ CHECKED=0
 check_file() {
     local f="$1"
     case "$f" in
-        *.sh|*.php|*.css|*.js|*.conf) ;;
+        *.sh|*.php|*.css|*.js|*.conf|*.py|*.json|*.service|*.path|*.timer|MANIFEST|VERSION|allowed_signers) ;;
         *) return 0 ;;
     esac
     # Skip vendored/local-only trees even if somehow passed explicitly.

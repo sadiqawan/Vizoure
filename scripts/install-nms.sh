@@ -5,7 +5,7 @@ set -eo pipefail
 # script from leaving a silent, undiagnosed partial state. See md/05-test-vm-
 # workflow.md in the Vizoure repo, and README.md's "Recovery" section, for the
 # manual recovery steps that go with this failure point.
-trap 'echo "ERROR: install-nms.sh failed at line $LINENO. Check for a pre-existing backup under /tmp/vizoure-db-backup-*.sql.gz before retrying — see README.md Recovery section." >&2' ERR
+trap 'echo "ERROR: install-nms.sh failed at line $LINENO. Check for a pre-existing backup under /var/backups/vizoure/ before retrying — see README.md Recovery section." >&2' ERR
 
 # Single ref variable (ISS-34): branch or tag every GitHub fetch below uses
 # (script, branding/ manifest, header files, logos). Default is main; set
@@ -97,7 +97,8 @@ echo "  Database state: ${DB_STATE} (${TABLE_COUNT} tables)"
 if [ "$DB_STATE" != "empty" ]; then
     # Mirrors upgrade.sh's step [2/6] backup — back up before anything further
     # touches an already-populated database, whether complete or partial.
-    BACKUP_FILE="/tmp/vizoure-db-backup-$(date +%Y%m%d-%H%M%S).sql.gz"
+    install -d -m 0700 /var/backups/vizoure
+    BACKUP_FILE="/var/backups/vizoure/vizoure-db-backup-$(date +%Y%m%d-%H%M%S).sql.gz"
     echo "  Existing database detected — backing up to ${BACKUP_FILE} before continuing..."
     # '|| true': a failed/partial backup here must not abort the script via
     # pipefail before the partial-state check below gets to report the real
@@ -424,6 +425,19 @@ else
 fi
 
 echo ""
+# Record the installed release in ONE place (/etc/vizoure/version), only after everything succeeded.
+# The updater reads this file; the value comes from branding/VERSION of the package that was installed.
+if [ -s /tmp/vizoure-branding/VERSION ]; then
+    install -d -m 0755 /etc/vizoure
+    tr -d '[:space:]' < /tmp/vizoure-branding/VERSION > /etc/vizoure/.version.new
+    echo >> /etc/vizoure/.version.new
+    chmod 0644 /etc/vizoure/.version.new
+    mv -f /etc/vizoure/.version.new /etc/vizoure/version
+    echo "  Installed release recorded: $(cat /etc/vizoure/version)"
+else
+    echo "  WARNING: no VERSION file in the branding package; /etc/vizoure/version not updated"
+fi
+
 echo "========================================="
 echo "  Vizoure NMS Installation Complete!"
 echo "========================================="
