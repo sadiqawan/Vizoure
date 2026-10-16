@@ -38,7 +38,7 @@ else
         -o "$WORK_DIR/source-files/vizoure/user-data"
 fi
 # Pin the ref used by the autoinstall's GitHub fallback.
-sed -i "s/VIZOURE_REF:-main/VIZOURE_REF:-${VIZOURE_REF}/" "$WORK_DIR/source-files/vizoure/user-data"
+sed -i "s#VIZOURE_REF:-main#VIZOURE_REF:-${VIZOURE_REF}#" "$WORK_DIR/source-files/vizoure/user-data"
 
 # Ship scripts/ + branding/ (incl. branding/header/*) ON the ISO so the install is
 # local-first and does not depend on GitHub for branding. Fail the build if the
