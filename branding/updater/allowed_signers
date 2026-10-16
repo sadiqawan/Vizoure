@@ -1,4 +1,6 @@
 # Vizoure release signers (ssh-keygen -Y verify format). Installed to /etc/vizoure/allowed_signers.
-# One line per trusted release key, so keys can be rotated by shipping a release signed with the old key:
-#   vizoure-release namespaces="vizoure-release" ssh-ed25519 AAAA... comment
+# One line per trusted release key, so keys can be rotated by shipping a release signed with the old key.
+# Format: vizoure-release namespaces="vizoure-release" ssh-ed25519 AAAA... comment
 # An empty list means NO release can be installed from the UI (fail closed).
+# Key SHA256:l7HAsv+cMLIQ3l4549QgUxnHfo662f9bhYnoO2TGgbk (Vizoure release signing)
+vizoure-release namespaces="vizoure-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJlLp+B4VxdfCII7GsUFOdGx610mzHbSnex4V8JtnRyD Vizoure release signing
